@@ -1,0 +1,5 @@
+{
+  "name": "agy-hud",
+  "version": "1.0.0",
+  "description": "Enhanced Antigravity CLI Status-Line HUD with Host/SSH detection, Session Title & Dual-Window Quota"
+}
