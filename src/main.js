@@ -16,10 +16,11 @@ const { load, matchModel } = require("./quota");
 const { refreshQuota } = require("./quotaProbe");
 const { branch, sanitizedBranch, gitBranchFromPayload } = require("./gitinfo");
 const { getHostAndMode } = require("./host");
-const { getSessionTitle, syncTmuxTitle } = require("./session");
+const { getSessionTitle, getConversationInfo, syncTmuxTitle } = require("./session");
 const { render } = require("./statusline");
+const { collectAndSyncTmux } = require("./tmux");
 
-const version = "1.0.0";
+const version = "1.1.0";
 const consumedQuotaRefreshMs = 15 * 1000;
 const untouchedQuotaRefreshMs = 30 * 1000;
 
@@ -121,6 +122,10 @@ function renderStatusline(input, cfg = defaultConfig(), cache = null, opts = {})
   if (cfg.showHost) {
     hostInfo = opts.hostInfo ?? getHostAndMode(opts.hostRuntime);
   }
+  let convInfo = null;
+  if (cfg.showConversationId !== false || cfg.showConversationSize !== false) {
+    convInfo = opts.convInfo ?? getConversationInfo(payload, opts.sessionOpts);
+  }
   try {
     return render(payload, {
       config: cfg,
@@ -128,6 +133,7 @@ function renderStatusline(input, cfg = defaultConfig(), cache = null, opts = {})
       gitBranch: branchName,
       sessionTitle,
       hostInfo,
+      convInfo,
       now: opts.now
     });
   } catch {
@@ -185,7 +191,7 @@ function loadQuotaFromCandidates(candidates) {
 }
 
 function usage(write) {
-  write("usage: agy-hud [statusline|quota refresh|version]\n");
+  write("usage: agy-hud [statusline|tmux-status|quota refresh|version]\n");
 }
 
 async function runCli(args, deps = {}) {
@@ -202,6 +208,13 @@ async function runCli(args, deps = {}) {
   const command = args[0] ?? "statusline";
   if (command === "version" || command === "--version" || command === "-v") {
     stdout(`${version}\n`);
+    return 0;
+  }
+  if (command === "tmux-status") {
+    const summary = (deps.collectAndSyncTmux ?? collectAndSyncTmux)(deps.tmuxStatusOpts);
+    if (summary) {
+      stdout(`${summary}\n`);
+    }
     return 0;
   }
   if (command === "statusline") {

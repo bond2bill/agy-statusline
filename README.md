@@ -20,6 +20,8 @@
    - Single-line or multi-line HUD with customizable segments.
    - **Host & Connection Detection (`host` segment)**: Automatically detects hardware (`MacMini`, `Laptop`, or hostname) and connection context (`Local` vs `SSH`, including active `tmux` client ancestry) — eliminating multi-machine confusion when remoting from a Laptop into a Mac mini.
    - **Real-Time `/rename` Session Title & `tmux` Sync (`session` segment)**: Instant `/rename` reactivity via `history.jsonl` (matching `conversationId` or `workspace` on brand-new sessions before the first prompt), `conversation_title` payload, and SQLite (`~/.gemini/antigravity-cli/conversation_summaries.db`). Automatically synchronizes both the enclosing `tmux` pane title (`tmux select-pane -T`) and window name (`tmux rename-window`).
+   - **Responsive Conversation ID & Storage Size (`conversation` segment)**: Displays full 36-char Conversation UUID on wide terminals (compacting to 8-char short ID on narrower splits) alongside real storage footprint (`SQLite .db + .db-wal + transcript_full.jsonl`).
+   - **Single-Pass `tmux` Fleet Version & Uptime Monitor (`src/tmux.js`)**: Tracks exact running versions vs. latest disk binaries and true child process uptimes for both `agy` and Claude Code (`X.Y.Z`) on `tmux` pane borders, window tabs, and `status-right`.
    - **Git Workspace Intelligence (`workspace` segment)**: Fast, zero-subprocess `.git/HEAD` branch resolver supporting standard repositories, worktrees, and submodules.
    - **Context Window Bar (`context` segment)**: Visual progress bar with color-coded warning/critical thresholds.
    - **Dual-Window Quota (`quota` segment)**: Tracks `5h` and `Week` usage windows with countdown timers and a local loopback probe against the active Antigravity language server (`GetUserStatus`).
@@ -89,11 +91,11 @@ cd agy-statusline
 ```
 
 What `./install.sh` does automatically:
-1. Builds `dist/agy-hud.js` from `src/*.js` and installs the plugin into `~/.gemini/config/plugins/agy-hud/`.
-2. Copies `statusline.sh` and `title.sh` into `~/.gemini/antigravity-cli/`.
-3. Preserves your existing `~/.gemini/config/plugins/agy-hud/config.json` (or initializes it from `config.example.json` on first install).
-4. Updates `~/.gemini/antigravity-cli/settings.json` to wire both `statusLine` and `title` hooks.
-5. Automatically upgrades `~/.tmux.conf` (if present) so `tmux` window tabs and pane borders display `agy` session titles alongside Claude Code (`*.*.*`), and reloads the active `tmux` server.
+1. Builds `dist/agy-hud.js` from `src/*.js` and links `~/.gemini/config/plugins/agy-hud` directly to the cloned repository (`--link` default on git clones, or `--copy` for standalone copies).
+2. Consolidates `statusLine`, `title`, and `tmux` helper entrypoints under `~/.gemini/config/plugins/agy-hud/` and cleans up legacy standalone copies in `~/.gemini/antigravity-cli/`.
+3. Preserves your existing `config.json` (or initializes it from `config.example.json` on first install).
+4. Updates `~/.gemini/antigravity-cli/settings.json` to wire both `statusLine` and `title` hooks to the unified plugin directory.
+5. Automatically upgrades `~/.tmux.conf` (if present) so `tmux` window tabs, pane borders, and `status-right` display live state (`●`/`○`), running vs. latest versions (`⬆` outdated alerts), and true process uptimes for both `agy` and Claude Code (`*.*.*`), reloading the active `tmux` server immediately.
 
 ---
 
@@ -125,6 +127,8 @@ set -g set-titles-string "#S#{?#{m/r:^([0-9]+[.][0-9]+[.][0-9]+|agy)$,#{pane_cur
   "show_agent_state": true,
   "show_icons": true,
   "show_session": true,
+  "show_conversation_id": true,
+  "show_conversation_size": true,
   "show_host": true,
   "context_value": "percent",
   "usage_value": "remaining"

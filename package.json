@@ -1,6 +1,6 @@
 {
   "name": "agy-statusline",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Enhanced Status-Line HUD & Terminal Title Suite for Google Antigravity CLI (agy) with Host/SSH detection, real-time Session Title, and Dual-Window Quota tracking.",
   "main": "dist/agy-hud.js",
   "bin": {

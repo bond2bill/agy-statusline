@@ -4,6 +4,17 @@ All notable changes to **`agy-statusline`** are documented in this file.
 
 ---
 
+## [1.1.0] - 2026-11-12
+
+### Added
+- **Responsive Conversation ID & Real Storage Size**: Added `getConversationInfo` (`src/session.js`) and HUD rendering (`src/statusline.js`, `scripts/statusline.sh`) showing full 36-char Conversation UUID on wide terminals, automatically compacting to 8-char short IDs on narrower panes, paired with total real conversation disk usage (`conversations/<id>.db` + `<id>.db-wal` + `transcript_full.jsonl`). Configurable via `show_conversation_id` and `show_conversation_size`.
+- **Single-Pass `tmux` Fleet Version & Uptime Monitor (`src/tmux.js`, `scripts/tmux-agent-status.sh`)**: Tracks exact in-memory running versions vs. latest installed binaries on disk and true child process uptimes (`etime`) for both `agy` and Claude Code (`claude` / `X.Y.Z`) across all `tmux` panes, highlighting outdated sessions (`⬆`) on pane borders, window tabs, and `status-right`.
+
+### Changed
+- **Unified Symlinked Plugin Architecture (`install.sh`)**: Consolidated `statusLine`, `title`, and `tmux` helper paths inside `~/.gemini/config/plugins/agy-hud/`, defaulting to repository symlink mode (`--link`) on git clones so updates stay synchronized without orphaned copies in `~/.gemini/antigravity-cli/`.
+
+---
+
 ## [1.0.0] - 2026-10-23
 
 ### Added

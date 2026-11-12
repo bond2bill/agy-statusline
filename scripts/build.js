@@ -22,6 +22,7 @@ const modules = [
   "quota",
   "quotaProbe",
   "statusline",
+  "tmux",
   "main"
 ];
 

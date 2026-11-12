@@ -17,6 +17,83 @@ const os = require("node:os");
 const path = require("node:path");
 const cp = require("node:child_process");
 
+const SAFE_CONV_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+const SAFE_VER_RE = /^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z._+-]*$/;
+
+/**
+ * Return the byte size of a regular file, or 0 when missing/inaccessible.
+ * @param {string} filePath
+ * @returns {number}
+ */
+function safeFileSize(filePath) {
+  if (!filePath) return 0;
+  try {
+    const st = fs.statSync(filePath);
+    return st.isFile() && Number.isFinite(st.size) && st.size > 0 ? st.size : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Format a byte count into a concise human-readable string (e.g. `129KB`, `5.9MB`, `1.20GB`).
+ * @param {number} bytes
+ * @returns {string}
+ */
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  if (bytes < 1024) return `${Math.trunc(bytes)}B`;
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))}KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)}GB`;
+}
+
+/**
+ * Resolve conversation ID (full + 8-char short prefix) and total storage size
+ * (`conversations/<id>.db` + `<id>.db-wal` + `brain/<id>/.system_generated/logs/transcript_full.jsonl`).
+ * @param {object} payload
+ * @param {object} [opts]
+ * @returns {{ id: string, shortId: string, sizeBytes: number, sizeText: string }}
+ */
+function getConversationInfo(payload, opts = {}) {
+  const empty = { id: "", shortId: "", sizeBytes: 0, sizeText: "" };
+  if (!payload || typeof payload !== "object") return empty;
+  const rawId = String(payload.conversation_id || payload.session_id || "").trim();
+  if (!rawId || !SAFE_CONV_ID_RE.test(rawId)) return empty;
+
+  const shortId = rawId.length > 8 ? rawId.slice(0, 8) : rawId;
+  const homeDir = opts.homeDir || os.homedir();
+  const cliDir =
+    opts.cliDir ||
+    process.env.AGY_CLI_DIR ||
+    (homeDir ? path.join(homeDir, ".gemini", "antigravity-cli") : "");
+
+  let sizeBytes = 0;
+  if (cliDir) {
+    const dbSize = safeFileSize(path.join(cliDir, "conversations", `${rawId}.db`));
+    const walSize = safeFileSize(path.join(cliDir, "conversations", `${rawId}.db-wal`));
+    let transcriptSize = safeFileSize(
+      path.join(cliDir, "brain", rawId, ".system_generated", "logs", "transcript_full.jsonl")
+    );
+    if (transcriptSize === 0) {
+      transcriptSize = safeFileSize(
+        path.join(cliDir, "brain", rawId, ".system_generated", "logs", "transcript.jsonl")
+      );
+    }
+    if (transcriptSize === 0 && typeof payload.transcript_path === "string") {
+      transcriptSize = safeFileSize(payload.transcript_path.trim());
+    }
+    sizeBytes = dbSize + walSize + transcriptSize;
+  }
+
+  return {
+    id: rawId,
+    shortId,
+    sizeBytes,
+    sizeText: formatBytes(sizeBytes)
+  };
+}
+
 /**
  * Strip surrounding quotes, backticks, markdown hashes, and whitespace from a title string.
  * @param {string} str
@@ -240,6 +317,8 @@ function syncTmuxTitle(sessionTitle, payload, opts = {}) {
   const shortTitle = sessionTitle ? truncate(cleanTitle(sessionTitle), 24) : "";
   const paneTitle = shortTitle ? `${ind} ${shortTitle}` : `${ind} ${workspace}`;
   const windowName = shortTitle;
+  const rawVer = String(payload?.version || "").trim();
+  const version = SAFE_VER_RE.test(rawVer) ? rawVer : "";
 
   const cacheFile = opts.cacheFile || path.join(os.tmpdir(), "agy-hud-tmux-cache.json");
   let cache = {};
@@ -252,7 +331,12 @@ function syncTmuxTitle(sessionTitle, payload, opts = {}) {
   }
 
   const prev = cache[paneId];
-  if (prev && prev.paneTitle === paneTitle && prev.windowName === windowName) {
+  if (
+    prev &&
+    prev.paneTitle === paneTitle &&
+    prev.windowName === windowName &&
+    (version === "" || prev.version === version)
+  ) {
     return false;
   }
 
@@ -267,7 +351,18 @@ function syncTmuxTitle(sessionTitle, payload, opts = {}) {
         stdio: "ignore"
       });
     }
-    cache[paneId] = { paneTitle, windowName, updatedAt: Date.now() };
+    if (version) {
+      execFn("tmux", ["set-option", "-p", "-t", paneId, "@agent_ver", version], {
+        timeout: 200,
+        stdio: "ignore"
+      });
+    }
+    cache[paneId] = {
+      paneTitle,
+      windowName,
+      version: version || prev?.version || "",
+      updatedAt: Date.now()
+    };
     fs.writeFileSync(cacheFile, JSON.stringify(cache), { encoding: "utf8", mode: 0o600 });
     return true;
   } catch {
@@ -278,6 +373,8 @@ function syncTmuxTitle(sessionTitle, payload, opts = {}) {
 module.exports = {
   cleanTitle,
   truncate,
+  formatBytes,
+  getConversationInfo,
   getSessionTitle,
   resolveTmuxPane,
   syncTmuxTitle

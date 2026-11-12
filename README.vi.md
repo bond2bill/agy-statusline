@@ -24,7 +24,8 @@ Khi làm việc trên nhiều máy (ví dụ: dùng MacBook SSH vào Mac mini ho
 
 ### 1.3. Hai chế độ Status-Line linh hoạt
 1. **Chế độ Node.js HUD Plugin (`--hud`, mặc định)**:
-   - Giao diện giàu thông tin: `Host·Mode`, `Model | Plan Tier`, `Session Title`, `Workspace`, `Git Branch` (hỗ trợ cả git worktree), `Agent State`, `Context Bar` và `Dual-Window Quota (5h & Week)`.
+   - Giao diện giàu thông tin: `Host·Mode`, `Model | Plan Tier`, `Session Title`, `Conversation ID` (màn rộng hiện full UUID, màn hẹp tự thu gọn 8 ký tự) kèm `Dung lượng thực tế (.db + .db-wal + transcript_full.jsonl)`, `Workspace`, `Git Branch` (hỗ trợ cả git worktree), `Agent State`, `Context Bar` và `Dual-Window Quota (5h & Week)`.
+   - Tích hợp bộ giám sát `tmux` (`scripts/tmux-agent-status.sh`) cho cả `agy` lẫn Claude Code (`*.*.*`): hiển thị Version thực đang chạy so với bản mới trên đĩa (`⬆`), chấm trạng thái `●`/`○`, Uptime tiến trình trên viền Pane, cờ `⬆` trên Tab Window và tổng quan toàn máy ở góc phải đáy `tmux`.
 2. **Chế độ Pure-Bash (`--bash`)**:
    - Sử dụng `scripts/statusline.sh` thuần Bash + `jq` với 3 mức co giãn: **Wide (≥120 cột)**, **Medium (80–119 cột)** và **Narrow (<80 cột)**.
 
@@ -44,11 +45,11 @@ cd agy-statusline
 ```
 
 Script [`install.sh`](install.sh) sẽ tự động:
-1. Đóng gói `src/*.js` thành `dist/agy-hud.js` và cài đặt vào `~/.gemini/config/plugins/agy-hud/`.
-2. Sao chép `statusline.sh` và `title.sh` vào `~/.gemini/antigravity-cli/`.
+1. Đóng gói `src/*.js` thành `dist/agy-hud.js` và symlink trực tiếp `~/.gemini/config/plugins/agy-hud` về thư mục repo (`--link` mặc định khi clone từ git, hoặc `--copy` nếu muốn chép rời).
+2. Gom toàn bộ `statusLine`, `title` và script `tmux` về chung một đầu mối `~/.gemini/config/plugins/agy-hud/` (dọn sạch các bản copy lẻ cũ trong `~/.gemini/antigravity-cli/`).
 3. Giữ nguyên file `config.json` hiện có (hoặc khởi tạo từ `config.example.json` nếu cài lần đầu).
-4. Cập nhật `~/.gemini/antigravity-cli/settings.json` cho cả `statusLine` và `title`.
-5. Tự động cập nhật `~/.tmux.conf` (nếu có) để hỗ trợ hiển thị tên phiên của `agy` trên cả Window Tab và Pane Border của `tmux`, đồng thời reload `tmux` ngay lập tức.
+4. Cập nhật `~/.gemini/antigravity-cli/settings.json` cho cả `statusLine` và `title` trỏ thống nhất về plugin.
+5. Tự động nâng cấp `~/.tmux.conf` (nếu có) để hiển thị trạng thái, version đang chạy vs bản mới (`⬆`) và uptime tiến trình cho cả `agy` lẫn Claude Code trên Window Tab, Pane Border và Status Bottom của `tmux`, đồng thời reload `tmux` ngay lập tức.
 
 ---
 

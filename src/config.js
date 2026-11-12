@@ -24,6 +24,8 @@ function defaultConfig() {
     showAgentState: true,
     showIcons: true,
     showSession: true,
+    showConversationId: true,
+    showConversationSize: true,
     showHost: true,
     contextValue: "percent",
     usageValue: "remaining",
@@ -50,6 +52,12 @@ function merge(base, patch) {
   if (typeof patch.show_agent_state === "boolean") base.showAgentState = patch.show_agent_state;
   if (typeof patch.show_icons === "boolean") base.showIcons = patch.show_icons;
   if (typeof patch.show_session === "boolean") base.showSession = patch.show_session;
+  if (typeof patch.show_conversation_id === "boolean") {
+    base.showConversationId = patch.show_conversation_id;
+  }
+  if (typeof patch.show_conversation_size === "boolean") {
+    base.showConversationSize = patch.show_conversation_size;
+  }
   if (typeof patch.show_host === "boolean") base.showHost = patch.show_host;
   if (typeof patch.context_value === "string" && patch.context_value !== "") {
     base.contextValue = patch.context_value;

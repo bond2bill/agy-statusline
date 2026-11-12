@@ -15,14 +15,23 @@ DATA=$(cat)
   read -r CWD || true
   read -r CONV_ID || true
   read -r CONV_TITLE || true
+  read -r AGY_VER || true
 } <<< "$(
   printf "%s\n" "$DATA" | jq -r '
     (.agent_state // "idle"),
     (.workspace.current_dir // .cwd // ""),
     (.conversation_id // .session_id // ""),
-    (.session_name // .title // .conversation_title // "")
-  ' 2>/dev/null || printf "idle\n\n\n"
+    (.session_name // .title // .conversation_title // ""),
+    (.version // "")
+  ' 2>/dev/null || printf "idle\n\n\n\n"
 )"
+
+if [[ ! "${CONV_ID:-}" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; then
+  CONV_ID=""
+fi
+if [[ ! "${AGY_VER:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z._+-]*$ ]]; then
+  AGY_VER=""
+fi
 
 if [ -n "$CWD" ]; then
   if [[ "$CWD" =~ /google/src/cloud/[^/]+/([^/]+) ]]; then
@@ -109,10 +118,16 @@ if [ "${AGY_TITLE_NO_TTY:-0}" != "1" ] && [ -n "${TMUX:-}" ]; then
     if [ -n "$SESSION_TITLE" ]; then
       tmux rename-window -t "$TARGET_PANE" "$VAR_TITLE" 2>/dev/null || true
     fi
+    if [ -n "${AGY_VER:-}" ]; then
+      tmux set-option -p -t "$TARGET_PANE" @agent_ver "$AGY_VER" 2>/dev/null || true
+    fi
   else
     tmux select-pane -T "$TAB_TITLE" 2>/dev/null || true
     if [ -n "$SESSION_TITLE" ]; then
       tmux rename-window "$VAR_TITLE" 2>/dev/null || true
+    fi
+    if [ -n "${AGY_VER:-}" ]; then
+      tmux set-option -p @agent_ver "$AGY_VER" 2>/dev/null || true
     fi
   fi
 fi

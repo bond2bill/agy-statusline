@@ -1,6 +1,8 @@
 {
   "show_host": true,
   "show_session": true,
+  "show_conversation_id": true,
+  "show_conversation_size": true,
   "show_model": true,
   "show_progress_bar": true,
   "multiline": true,

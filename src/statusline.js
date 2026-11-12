@@ -50,6 +50,21 @@ function renderSessionSegment(title, config) {
   return `${withIcon(config, "\uF4A4 ", "")}${title}`;
 }
 
+function renderConvSegment(convInfo, config, useShortId = false) {
+  if (!convInfo || typeof convInfo !== "object") return "";
+  const showId = config.showConversationId !== false && Boolean(convInfo.id);
+  const showSize = config.showConversationSize !== false && Boolean(convInfo.sizeText);
+  if (!showId && !showSize) return "";
+  const idText = showId ? (useShortId ? convInfo.shortId || convInfo.id : convInfo.id) : "";
+  if (idText && showSize) {
+    return `${withIcon(config, "\uF292 ", "#")}${idText} (${convInfo.sizeText})`;
+  }
+  if (idText) {
+    return `${withIcon(config, "\uF292 ", "#")}${idText}`;
+  }
+  return `${withIcon(config, "\uF0A0 ", "")}${convInfo.sizeText}`;
+}
+
 function renderHostSegment(hostInfo, config) {
   if (!hostInfo || !hostInfo.machine) return "";
   const icon =
@@ -132,6 +147,7 @@ function render(payload, opts) {
   );
   const sessionTitle = opts.sessionTitle ?? "";
   const hostInfo = opts.hostInfo ?? null;
+  const convInfo = opts.convInfo ?? null;
   if (config.multiline) {
     return renderMultiline(
       payload,
@@ -143,7 +159,8 @@ function render(payload, opts) {
       opts.gitBranch ?? "",
       stateLabel,
       sessionTitle,
-      hostInfo
+      hostInfo,
+      convInfo
     );
   }
   return renderSingleLine(
@@ -155,7 +172,8 @@ function render(payload, opts) {
     quota,
     stateLabel,
     sessionTitle,
-    hostInfo
+    hostInfo,
+    convInfo
   );
 }
 
@@ -169,7 +187,8 @@ function renderMultiline(
   branchName,
   stateLabel,
   sessionTitle = "",
-  hostInfo = null
+  hostInfo = null,
+  convInfo = null
 ) {
   const hostText =
     config.showHost && hostInfo
@@ -179,79 +198,98 @@ function renderMultiline(
           config.color
         )
       : "";
-  const line1Parts = [];
-  if (hostText) line1Parts.push(hostText);
-  line1Parts.push(colorize(modelSegment, colorBlue, config.color));
-  if (config.showSession && sessionTitle !== "") {
-    line1Parts.push(
-      colorize(renderSessionSegment(sessionTitle, config), colorCyan, config.color)
-    );
-  }
-  if (config.showCWD && payload.cwd) {
-    line1Parts.push(
-      colorize(
-        withIcon(config, "\uF07C ", "") + path.basename(payload.cwd),
-        colorYellow,
-        config.color
-      )
-    );
-  }
-  if (config.showGitBranch && branchName !== "") {
-    line1Parts.push(
-      colorize(renderGitSegment(branchName, config), colorMagenta, config.color)
-    );
-  }
-  const stateText = config.showAgentState
-    ? colorize(stateLabel, stateColor(stateLabel), config.color)
-    : "";
-  line1Parts.push(stateText);
-  let line1 = joinHeader(...line1Parts);
-
-  if (visibleLen(line1) > width && config.showSession && sessionTitle !== "") {
-    const shortTitle = truncate(sessionTitle, 20);
-    const p = [];
-    if (hostText) p.push(hostText);
-    p.push(colorize(modelSegment, colorBlue, config.color));
-    p.push(colorize(renderSessionSegment(shortTitle, config), colorCyan, config.color));
-    if (config.showCWD && payload.cwd) {
-      p.push(
-        colorize(
+  const convFullRaw = renderConvSegment(convInfo, config, false);
+  const convShortRaw = renderConvSegment(convInfo, config, true);
+  const convFullText = convFullRaw ? colorize(convFullRaw, colorMuted, config.color) : "";
+  const convShortText = convShortRaw ? colorize(convShortRaw, colorMuted, config.color) : "";
+  const modelText = colorize(modelSegment, colorBlue, config.color);
+  const cwdText =
+    config.showCWD && payload.cwd
+      ? colorize(
           withIcon(config, "\uF07C ", "") + path.basename(payload.cwd),
           colorYellow,
           config.color
         )
-      );
-    }
-    if (config.showGitBranch && branchName !== "") {
-      p.push(colorize(renderGitSegment(branchName, config), colorMagenta, config.color));
-    }
-    p.push(stateText);
-    line1 = joinHeader(...p);
+      : "";
+  const gitText =
+    config.showGitBranch && branchName !== ""
+      ? colorize(renderGitSegment(branchName, config), colorMagenta, config.color)
+      : "";
+  const stateText = config.showAgentState
+    ? colorize(stateLabel, stateColor(stateLabel), config.color)
+    : "";
+
+  const sessionFullText =
+    config.showSession && sessionTitle !== ""
+      ? colorize(renderSessionSegment(sessionTitle, config), colorCyan, config.color)
+      : "";
+
+  // Tier 0: Full layout with full 36-char Conversation UUID + Size
+  let line1 = joinHeader(
+    hostText,
+    modelText,
+    sessionFullText,
+    convFullText,
+    cwdText,
+    gitText,
+    stateText
+  );
+
+  // Tier 1: Step down Conversation UUID to 8-char short ID if full UUID exceeds width
+  if (visibleLen(line1) > width && convShortText !== convFullText) {
+    line1 = joinHeader(
+      hostText,
+      modelText,
+      sessionFullText,
+      convShortText,
+      cwdText,
+      gitText,
+      stateText
+    );
   }
+
+  // Tier 2: Truncate Session Title (20 chars) + keep 8-char short Conversation ID
+  if (visibleLen(line1) > width && sessionFullText !== "") {
+    const sess20 = colorize(
+      renderSessionSegment(truncate(sessionTitle, 20), config),
+      colorCyan,
+      config.color
+    );
+    line1 = joinHeader(hostText, modelText, sess20, convShortText, cwdText, gitText, stateText);
+  }
+
+  // Tier 3: Drop CWD, keep 8-char short Conversation ID + Git + Session (16 chars)
+  if (visibleLen(line1) > width) {
+    const sess16 =
+      sessionFullText !== ""
+        ? colorize(
+            renderSessionSegment(truncate(sessionTitle, 16), config),
+            colorCyan,
+            config.color
+          )
+        : "";
+    line1 = joinHeader(hostText, modelText, sess16, convShortText, gitText, stateText);
+  }
+
+  // Tier 4: Drop Git, keep 8-char short Conversation ID + Session (14 chars)
+  if (visibleLen(line1) > width && convShortText !== "") {
+    const sess14 =
+      sessionFullText !== ""
+        ? colorize(
+            renderSessionSegment(truncate(sessionTitle, 14), config),
+            colorCyan,
+            config.color
+          )
+        : "";
+    line1 = joinHeader(hostText, modelText, sess14, convShortText, stateText);
+  }
+
+  // Tier 5: Ultra-narrow fallbacks (drop Conversation ID to preserve core HUD)
   if (visibleLen(line1) > width) {
     const p = [];
     if (hostText) p.push(hostText);
-    p.push(colorize(modelSegment, colorBlue, config.color));
-    if (config.showSession && sessionTitle !== "") {
-      p.push(
-        colorize(
-          renderSessionSegment(truncate(sessionTitle, 16), config),
-          colorCyan,
-          config.color
-        )
-      );
-    }
-    if (config.showGitBranch && branchName !== "") {
-      p.push(colorize(renderGitSegment(branchName, config), colorMagenta, config.color));
-    }
-    p.push(stateText);
-    line1 = joinHeader(...p);
-  }
-  if (visibleLen(line1) > width) {
-    const p = [];
-    if (hostText) p.push(hostText);
-    p.push(colorize(modelSegment, colorBlue, config.color));
-    if (config.showSession && sessionTitle !== "") {
+    p.push(modelText);
+    if (sessionFullText !== "") {
       p.push(
         colorize(
           renderSessionSegment(truncate(sessionTitle, 14), config),
@@ -343,7 +381,8 @@ function renderSingleLine(
   quota,
   stateLabel,
   sessionTitle = "",
-  hostInfo = null
+  hostInfo = null,
+  convInfo = null
 ) {
   const coloredHost =
     config.showHost && hostInfo
@@ -358,6 +397,10 @@ function renderSingleLine(
     config.showSession && sessionTitle
       ? colorize(renderSessionSegment(truncate(sessionTitle, 18), config), colorCyan, config.color)
       : "";
+  const convFullRaw = renderConvSegment(convInfo, config, false);
+  const convShortRaw = renderConvSegment(convInfo, config, true);
+  const coloredConvFull = convFullRaw ? colorize(convFullRaw, colorMuted, config.color) : "";
+  const coloredConvShort = convShortRaw ? colorize(convShortRaw, colorMuted, config.color) : "";
   const ctx = `Ctx ${contextValue(config, payload.context_window, ctxPct)}`;
   let tokens = tokenDetail(payload.context_window);
   if (tokens !== "" && config.contextValue === "percent") {
@@ -382,10 +425,25 @@ function renderSingleLine(
   }
   const levels = [];
   if (coloredSession) {
+    if (coloredConvFull) {
+      levels.push([coloredHost, coloredBadge, coloredSession, coloredConvFull, ctx, tokens, bar, usage2, stateText]);
+    }
+    if (coloredConvShort) {
+      levels.push([coloredHost, coloredBadge, coloredSession, coloredConvShort, ctx, tokens, bar, usage2, stateText]);
+      levels.push([coloredHost, coloredBadge, coloredSession, coloredConvShort, ctx, bar, usage2, stateText]);
+      levels.push([coloredHost, coloredBadge, coloredSession, coloredConvShort, ctx, stateText]);
+    }
     levels.push([coloredHost, coloredBadge, coloredSession, ctx, tokens, bar, usage2, stateText]);
     levels.push([coloredHost, coloredBadge, coloredSession, ctx, bar, usage2, stateText]);
     levels.push([coloredHost, coloredBadge, coloredSession, ctx, stateText]);
     levels.push([coloredHost, coloredSession, ctx, stateText]);
+  }
+  if (coloredConvFull) {
+    levels.push([coloredHost, coloredBadge, coloredConvFull, ctx, tokens, bar, usage2, stateText]);
+  }
+  if (coloredConvShort) {
+    levels.push([coloredHost, coloredBadge, coloredConvShort, ctx, bar, usage2, stateText]);
+    levels.push([coloredHost, coloredBadge, coloredConvShort, ctx, stateText]);
   }
   levels.push(
     [coloredHost, coloredBadge, ctx, tokens, bar, usage2, stateText],
@@ -781,6 +839,7 @@ function title(raw) {
 module.exports = {
   shortModelName,
   renderSessionSegment,
+  renderConvSegment,
   renderHostSegment,
   renderModelSegment,
   renderGitSegment,

@@ -134,7 +134,49 @@ SUB_FMT="${FG_GRAY}subagents ${NUM_COLOR}${SUBAGENTS}${R}"
 BG_FMT="${FG_GRAY}tasks ${NUM_COLOR}${BG_TASKS}${R}"
 DOT="${FG_GRAY} · ${R}"
 
-# ─── Session Title ───────────────────────────────────────────────────────────
+# ─── Session Title & Conversation ID/Size ────────────────────────────────────
+if [[ ! "${CONV_ID:-}" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; then
+  CONV_ID=""
+fi
+
+file_bytes() {
+  local f="$1"
+  [ -f "$f" ] || { echo 0; return; }
+  stat -f%z "$f" 2>/dev/null || stat -c%s "$f" 2>/dev/null || echo 0
+}
+
+CONV_BADGE=""
+if [ -n "${CONV_ID:-}" ]; then
+  CLI_HOME="${AGY_CLI_DIR:-$HOME/.gemini/antigravity-cli}"
+  DB_B=$(file_bytes "$CLI_HOME/conversations/${CONV_ID}.db")
+  WAL_B=$(file_bytes "$CLI_HOME/conversations/${CONV_ID}.db-wal")
+  TR_B=$(file_bytes "$CLI_HOME/brain/${CONV_ID}/.system_generated/logs/transcript_full.jsonl")
+  if [ "$TR_B" -eq 0 ]; then
+    TR_B=$(file_bytes "$CLI_HOME/brain/${CONV_ID}/.system_generated/logs/transcript.jsonl")
+  fi
+  TOT_B=$((DB_B + WAL_B + TR_B))
+  SIZE_TXT=""
+  if [ "$TOT_B" -ge 1073741824 ]; then
+    SIZE_TXT=$(LC_NUMERIC=C awk -v b="$TOT_B" 'BEGIN { printf "%.2fGB", b/1073741824 }')
+  elif [ "$TOT_B" -ge 1048576 ]; then
+    SIZE_TXT=$(LC_NUMERIC=C awk -v b="$TOT_B" 'BEGIN { printf "%.1fMB", b/1048576 }')
+  elif [ "$TOT_B" -ge 1024 ]; then
+    SIZE_TXT="$(( (TOT_B + 512) / 1024 ))KB"
+  elif [ "$TOT_B" -gt 0 ]; then
+    SIZE_TXT="${TOT_B}B"
+  fi
+  if [ "$COLS" -ge 140 ]; then
+    DISP_ID="$CONV_ID"
+  else
+    DISP_ID="${CONV_ID:0:8}"
+  fi
+  if [ -n "$SIZE_TXT" ]; then
+    CONV_BADGE="${FG_GRAY} ╱ #${DISP_ID} (${SIZE_TXT})${R}"
+  else
+    CONV_BADGE="${FG_GRAY} ╱ #${DISP_ID}${R}"
+  fi
+fi
+
 SES=""
 SESSION_TITLE=""
 HIST_FILE="${AGY_HISTORY_FILE:-$HOME/.gemini/antigravity-cli/history.jsonl}"
@@ -231,7 +273,7 @@ else
 fi
 
 # ─── Responsive Output ───────────────────────────────────────────────────────
-LINE1="${HOST_BADGE}${S}${SES}${M}${V}"
+LINE1="${HOST_BADGE}${S}${SES}${CONV_BADGE}${M}${V}"
 LINE2=" ${CTX}${DOT}${ART_FMT}${DOT}${SUB_FMT}${DOT}${BG_FMT}${DOT}${SB}"
 
 if [ "$COLS" -ge 120 ]; then

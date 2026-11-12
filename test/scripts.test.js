@@ -57,7 +57,7 @@ test("scripts/statusline.sh renders Wide, Medium, and Narrow layouts and detects
       task_count: 3,
       model: { display_name: "Gemini 4 Argon (High)" },
       terminal_width: cols,
-      conversation_id: "conv-bash-1",
+      conversation_id: "cc9b9f65-a822-484a-b71a-5cc3f177adf8",
       conversation_title: "Bash HUD Session"
     });
 
@@ -74,6 +74,12 @@ test("scripts/statusline.sh renders Wide, Medium, and Narrow layouts and detects
     const plain = strip(out);
     assert.ok(plain.includes("[MacMini·SSH]"), `Expected [MacMini·SSH] for width=${cols}: ${plain}`);
     assert.ok(plain.includes("WORKING"), `Expected WORKING state for width=${cols}: ${plain}`);
+    if (cols >= 140) {
+      assert.ok(plain.includes("#cc9b9f65-a822-484a-b71a-5cc3f177adf8"), `Expected full UUID at width=${cols}: ${plain}`);
+    } else if (cols >= 80) {
+      assert.ok(plain.includes("#cc9b9f65"), `Expected 8-char ID at width=${cols}: ${plain}`);
+      assert.ok(!plain.includes("#cc9b9f65-a822-484a-b71a-5cc3f177adf8"));
+    }
   }
 
   // Minimal payload without conversation_id or conversation_title
@@ -129,16 +135,24 @@ test("install.sh installs plugin, scripts, updates settings.json, and upgrades .
     const pluginDir = path.join(tmp, "plugins", "agy-hud");
     const tmuxConf = path.join(tmp, ".tmux.conf");
     fs.mkdirSync(cliDir, { recursive: true });
+    // Pre-seed legacy orphaned scripts in cliDir to verify install.sh cleans them up
+    fs.writeFileSync(path.join(cliDir, "statusline.sh"), "#!/bin/sh\n");
+    fs.writeFileSync(path.join(cliDir, "title.sh"), "#!/bin/sh\n");
     fs.writeFileSync(
       path.join(cliDir, "settings.json"),
       JSON.stringify({ model: "Gemini 4 Argon (High)" }, null, 2)
     );
     fs.writeFileSync(
       tmuxConf,
-      "setw -g window-status-current-format ' #I:#{?#{m:*.*.*,#{pane_current_command}},#{s/✳ //:pane_title},#W}#F '\n"
+      [
+        "set -g status-right '#[fg=#a6adc8] %Y-%m-%d #[bold]%H:%M #[default]'",
+        "set -g status-right-length 50",
+        "setw -g window-status-current-format ' #I:#{?#{m:*.*.*,#{pane_current_command}},#{s/✳ //:pane_title},#W}#F '",
+        "set -g pane-border-format \" Pane: #{pane_index} | #{pane_current_command} \""
+      ].join("\n") + "\n"
     );
 
-    cp.execFileSync("bash", [path.join(rootDir, "install.sh"), "--hud"], {
+    cp.execFileSync("bash", [path.join(rootDir, "install.sh"), "--hud", "--copy"], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -150,8 +164,10 @@ test("install.sh installs plugin, scripts, updates settings.json, and upgrades .
 
     assert.ok(fs.existsSync(path.join(pluginDir, "dist", "agy-hud.js")));
     assert.ok(fs.existsSync(path.join(pluginDir, "hooks", "status-line.sh")));
-    assert.ok(fs.existsSync(path.join(cliDir, "statusline.sh")));
-    assert.ok(fs.existsSync(path.join(cliDir, "title.sh")));
+    assert.ok(fs.existsSync(path.join(pluginDir, "scripts", "title.sh")));
+    assert.ok(fs.existsSync(path.join(pluginDir, "scripts", "tmux-agent-status.sh")));
+    assert.equal(fs.existsSync(path.join(cliDir, "statusline.sh")), false);
+    assert.equal(fs.existsSync(path.join(cliDir, "title.sh")), false);
 
     const updatedSettings = JSON.parse(
       fs.readFileSync(path.join(cliDir, "settings.json"), "utf8")
@@ -160,13 +176,33 @@ test("install.sh installs plugin, scripts, updates settings.json, and upgrades .
       updatedSettings.statusLine.command,
       path.join(pluginDir, "hooks", "status-line.sh")
     );
-    assert.equal(updatedSettings.title.command, path.join(cliDir, "title.sh"));
+    assert.equal(
+      updatedSettings.title.command,
+      path.join(pluginDir, "scripts", "title.sh")
+    );
 
     const updatedTmuxConf = fs.readFileSync(tmuxConf, "utf8");
     assert.ok(
-      updatedTmuxConf.includes("#{m/r:^([0-9]+[.][0-9]+[.][0-9]+|agy)$,#{pane_current_command}}"),
+      updatedTmuxConf.includes("#{m/r:^([0-9]+[.][0-9]+[.][0-9]+|agy|claude)$,#{pane_current_command}}"),
       `Expected upgraded tmux format in: ${updatedTmuxConf}`
     );
+    assert.ok(updatedTmuxConf.includes("tmux-agent-status.sh"));
+    assert.ok(updatedTmuxConf.includes("@agent_ver_badge"));
+    assert.ok(updatedTmuxConf.includes("@agent_uptime"));
+
+    // Verify --link mode creates a symlink directly to the repository
+    const linkedPluginDir = path.join(tmp, "plugins", "agy-hud-linked");
+    cp.execFileSync("bash", [path.join(rootDir, "install.sh"), "--hud", "--link"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AGY_CLI_DIR: cliDir,
+        AGY_PLUGIN_DIR: linkedPluginDir,
+        AGY_TMUX_CONF: tmuxConf
+      }
+    });
+    assert.equal(fs.lstatSync(linkedPluginDir).isSymbolicLink(), true);
+    assert.equal(fs.realpathSync(linkedPluginDir), fs.realpathSync(rootDir));
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
