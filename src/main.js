@@ -123,7 +123,7 @@ function resolveTerminalWidth(payload, isClaude = false, opts = {}) {
         ).trim()
       );
       if (Number.isFinite(rawW) && rawW > 0) {
-        return isClaude ? Math.max(40, rawW - 4) : rawW;
+        return isClaude ? Math.max(40, rawW - 1) : rawW;
       }
     } catch {}
   }

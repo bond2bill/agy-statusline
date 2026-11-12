@@ -168,7 +168,7 @@ if [ "$CONFIGURE_CLAUDE" = "yes" ]; then
       fs.copyFileSync(file, file + ".bak");
     } catch {}
   }
-  data.statusLine = { type: "command", command: statusCmd };
+  data.statusLine = { type: "command", command: statusCmd, padding: 0 };
   fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", "utf8");
   ' "$CLAUDE_SETTINGS_FILE" "$CLAUDE_STATUS_CMD"
 fi

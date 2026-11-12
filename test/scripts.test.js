@@ -193,6 +193,7 @@ test("install.sh installs plugin, scripts, updates settings.json, and upgrades .
       updatedClaudeSettings.statusLine.command,
       path.join(pluginDir, "hooks", "claude-statusline.sh")
     );
+    assert.equal(updatedClaudeSettings.statusLine.padding, 0);
     const claudeOut = cp.execFileSync("bash", [path.join(claudeDir, "statusline.sh")], {
       input: JSON.stringify({
         session_id: "a14ac7d0-cc0f-4df5-be8c-5c5af88a820b",
