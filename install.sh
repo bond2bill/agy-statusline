@@ -137,7 +137,7 @@ if [ -f "$TMUX_CONF" ]; then
 
   const agentMatch = "#{m/r:^([0-9]+[.][0-9]+[.][0-9]+|agy|claude)$,#{pane_current_command}}";
   const desiredStatusRight =
-    "set -g status-right '\''#{?#{&&:" + agentMatch + ",#{!=:#{@agent_bar_ver},}},#{?#{==:#{@agent_outdated},1},#[fg=#f9e2af]#[bold]#{@agent_bar_ver}#[default],#[fg=#a6e3a1]#{@agent_bar_ver}#[default]} #[fg=#94e2d5]⏱ #{@agent_uptime}#[fg=#45475a] │ #[default],}#(" + helperPath + ")#[fg=#45475a] │#[fg=#a6adc8] %Y-%m-%d #[bold]%H:%M #[default]'\''";
+    "set -g status-right '\''#{?#{&&:" + agentMatch + ",#{!=:#{@agent_bar_ver},}},#{?#{==:#{@agent_outdated},1},#[fg=#f9e2af]#[bold]#{@agent_bar_ver}#[default],#[fg=#a6e3a1]#{@agent_bar_ver}#[default]} #[fg=#94e2d5]⏱ #{@agent_uptime}#[fg=#45475a] │ #[default],}#{?#{!=:#{@fleet_summary},},#{E:@fleet_summary}#[fg=#45475a] │#[default],}#(" + helperPath + " >/dev/null 2>&1)#[fg=#a6adc8] %Y-%m-%d #[bold]%H:%M #[default]'\''";
   const desiredWinCur =
     "setw -g window-status-current-format '\'' #I:#{?" + agentMatch + ",#{s/ [|] .*//:pane_title},#W}#{?#{==:#{@win_outdated},1}, #[fg=#f9e2af]#[bg=#45475a]#[bold]⬆#[fg=#f5e0dc]#[bg=#45475a]#[bold],}#F '\''";
   const desiredWin =

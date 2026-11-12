@@ -6,6 +6,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -eu
 
+export PATH="/opt/homebrew/bin:/usr/local/bin:${HOME:-}/.local/bin:/usr/sbin:/sbin:${PATH:-/usr/bin:/bin}"
+
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 

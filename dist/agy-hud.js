@@ -2583,11 +2583,15 @@ function collectAndSyncTmux(opts = {}) {
       ) || ""
     );
     windowsRaw = String(
-      execFn("tmux", ["list-windows", "-a", "-F", "#{window_id}\t#{@win_outdated}"], {
-        encoding: "utf8",
-        timeout: 500,
-        stdio: ["ignore", "pipe", "ignore"]
-      }) || ""
+      execFn(
+        "tmux",
+        ["list-windows", "-a", "-F", "#{window_id}\t#{@win_outdated}\t#{@fleet_summary}"],
+        {
+          encoding: "utf8",
+          timeout: 500,
+          stdio: ["ignore", "pipe", "ignore"]
+        }
+      ) || ""
     );
     psRaw = String(
       execFn("ps", ["-axo", "pid=,ppid=,etime=,comm="], {
@@ -2693,14 +2697,35 @@ function collectAndSyncTmux(opts = {}) {
     }
   }
 
+  let curFleetSummary = null;
   for (const line of windowsRaw.split(/\r?\n/)) {
     if (!line.trim()) continue;
-    const [windowId, curWinOutdated = ""] = line.split("\t");
+    const [windowId, curWinOutdated = "", fleetSum = ""] = line.split("\t");
+    if (curFleetSummary === null) {
+      curFleetSummary = fleetSum;
+    }
     if (!windowId || !winOutdatedTarget.has(windowId)) continue;
     const desired = winOutdatedTarget.get(windowId) ? "1" : "0";
     if (curWinOutdated.trim() !== desired) {
       appendTmuxCmd(tmuxArgs, ["set-option", "-w", "-t", windowId, "@win_outdated", desired]);
     }
+  }
+
+  let summary = "";
+  if (totalAgents > 0) {
+    const activePart = `#[fg=#a6e3a1]●${workingAgents}#[fg=#6c7086]/${totalAgents}#[default]`;
+    const outdatedParts = [];
+    if (outdatedAgy > 0) outdatedParts.push(`${outdatedAgy} agy`);
+    if (outdatedCc > 0) outdatedParts.push(`${outdatedCc} cc`);
+    if (outdatedParts.length > 0) {
+      summary = `${activePart} #[fg=#f9e2af]#[bold]⬆ ${outdatedParts.join(" · ")}#[default]`;
+    } else {
+      summary = `${activePart} #[fg=#a6e3a1]✓#[default]`;
+    }
+  }
+
+  if (curFleetSummary !== summary) {
+    appendTmuxCmd(tmuxArgs, ["set-option", "-g", "@fleet_summary", summary]);
   }
 
   if (tmuxArgs.length > 0) {
@@ -2713,17 +2738,7 @@ function collectAndSyncTmux(opts = {}) {
     writeJsonSafe0600(pidCacheFile, nextPidCache);
   }
 
-  if (totalAgents === 0) {
-    return "";
-  }
-  const activePart = `#[fg=#a6e3a1]●${workingAgents}#[fg=#6c7086]/${totalAgents}#[default]`;
-  const outdatedParts = [];
-  if (outdatedAgy > 0) outdatedParts.push(`${outdatedAgy} agy`);
-  if (outdatedCc > 0) outdatedParts.push(`${outdatedCc} cc`);
-  if (outdatedParts.length > 0) {
-    return `${activePart} #[fg=#f9e2af]#[bold]⬆ ${outdatedParts.join(" · ")}#[default]`;
-  }
-  return `${activePart} #[fg=#a6e3a1]✓#[default]`;
+  return summary;
 }
 
 function appendTmuxCmd(tmuxArgs, cmdTokens) {
