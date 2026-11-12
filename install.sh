@@ -168,7 +168,8 @@ if [ "$CONFIGURE_CLAUDE" = "yes" ]; then
       fs.copyFileSync(file, file + ".bak");
     } catch {}
   }
-  data.statusLine = { type: "command", command: statusCmd, padding: 0 };
+  // Offset Claude Code'\''s outer footer `<Box paddingX={2}>` so HUD lines align flush-left at column 0.
+  data.statusLine = { type: "command", command: statusCmd, padding: -2 };
   fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", "utf8");
   ' "$CLAUDE_SETTINGS_FILE" "$CLAUDE_STATUS_CMD"
 fi
