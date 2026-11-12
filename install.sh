@@ -11,22 +11,29 @@ REPO_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 AGY_CLI_DIR="${AGY_CLI_DIR:-$HOME/.gemini/antigravity-cli}"
 DEFAULT_PLUGIN_DIR="$HOME/.gemini/config/plugins/agy-hud"
 PLUGIN_DIR="${AGY_PLUGIN_DIR:-$DEFAULT_PLUGIN_DIR}"
+DEFAULT_CLAUDE_DIR="$HOME/.claude"
+CLAUDE_DIR="${AGY_CLAUDE_DIR:-$DEFAULT_CLAUDE_DIR}"
 TMUX_CONF="${AGY_TMUX_CONF:-$HOME/.tmux.conf}"
 MODE="hud" # "hud" (Node.js HUD default) or "bash" (pure-Bash statusline.sh)
 INSTALL_STYLE="auto" # "auto" -> symlink if .git exists, else copy; overridable via --link / --copy
+CONFIGURE_CLAUDE="auto" # "auto" -> configure ~/.claude when present (or AGY_CLAUDE_DIR set)
 
 for arg in "$@"; do
   case "$arg" in
-    --bash) MODE="bash" ;;
-    --hud)  MODE="hud" ;;
-    --link) INSTALL_STYLE="link" ;;
-    --copy) INSTALL_STYLE="copy" ;;
+    --bash)      MODE="bash" ;;
+    --hud)       MODE="hud" ;;
+    --link)      INSTALL_STYLE="link" ;;
+    --copy)      INSTALL_STYLE="copy" ;;
+    --claude)    CONFIGURE_CLAUDE="yes" ;;
+    --no-claude) CONFIGURE_CLAUDE="no" ;;
     --help|-h)
-      echo "Usage: ./install.sh [--hud | --bash] [--link | --copy]"
-      echo "  --hud   (Default) Use Node.js HUD plugin + unified plugin title.sh"
-      echo "  --bash  Use pure-Bash statusline.sh + unified plugin title.sh"
-      echo "  --link  Symlink plugin directory directly to this repository (default for git clones)"
-      echo "  --copy  Copy standalone files into plugin directory"
+      echo "Usage: ./install.sh [--hud | --bash] [--link | --copy] [--claude | --no-claude]"
+      echo "  --hud        (Default) Use Node.js HUD plugin + unified plugin title.sh"
+      echo "  --bash       Use pure-Bash statusline.sh + unified plugin title.sh"
+      echo "  --link       Symlink plugin directory directly to this repository (default for git clones)"
+      echo "  --copy       Copy standalone files into plugin directory"
+      echo "  --claude     Force configuring Claude Code CLI (~/.claude/settings.json & statusline.sh)"
+      echo "  --no-claude  Skip configuring Claude Code CLI"
       exit 0
       ;;
   esac
@@ -40,7 +47,18 @@ if [ "$INSTALL_STYLE" = "auto" ]; then
   fi
 fi
 
+if [ "$CONFIGURE_CLAUDE" = "auto" ]; then
+  if [ -n "${AGY_CLAUDE_DIR:-}" ]; then
+    CONFIGURE_CLAUDE="yes"
+  elif [ "$PLUGIN_DIR" = "$DEFAULT_PLUGIN_DIR" ] && [ -d "$CLAUDE_DIR" ]; then
+    CONFIGURE_CLAUDE="yes"
+  else
+    CONFIGURE_CLAUDE="no"
+  fi
+fi
+
 chmod +x "$REPO_DIR/hooks/status-line.sh" \
+         "$REPO_DIR/hooks/claude-statusline.sh" \
          "$REPO_DIR/scripts/statusline.sh" \
          "$REPO_DIR/scripts/title.sh" \
          "$REPO_DIR/scripts/tmux-agent-status.sh"
@@ -80,11 +98,13 @@ else
   fi
   cp "$REPO_DIR/docs/hud-preview.png" "$PLUGIN_DIR/docs/hud-preview.png"
   cp "$REPO_DIR/hooks/status-line.sh" "$PLUGIN_DIR/hooks/status-line.sh"
+  cp "$REPO_DIR/hooks/claude-statusline.sh" "$PLUGIN_DIR/hooks/claude-statusline.sh"
   cp "$REPO_DIR/scripts/statusline.sh" "$PLUGIN_DIR/scripts/statusline.sh"
   cp "$REPO_DIR/scripts/title.sh" "$PLUGIN_DIR/scripts/title.sh"
   cp "$REPO_DIR/scripts/tmux-agent-status.sh" "$PLUGIN_DIR/scripts/tmux-agent-status.sh"
   cp "$REPO_DIR/dist/agy-hud.js" "$PLUGIN_DIR/dist/agy-hud.js"
   chmod +x "$PLUGIN_DIR/hooks/status-line.sh" \
+           "$PLUGIN_DIR/hooks/claude-statusline.sh" \
            "$PLUGIN_DIR/scripts/statusline.sh" \
            "$PLUGIN_DIR/scripts/title.sh" \
            "$PLUGIN_DIR/scripts/tmux-agent-status.sh" \
@@ -102,8 +122,10 @@ rm -f "$AGY_CLI_DIR"/statusline.sh "$AGY_CLI_DIR"/statusline.sh.bak* "$AGY_CLI_D
 SETTINGS_FILE="$AGY_CLI_DIR/settings.json"
 if [ "$MODE" = "bash" ]; then
   STATUS_CMD="$PLUGIN_DIR/scripts/statusline.sh"
+  CLAUDE_STATUS_CMD="$PLUGIN_DIR/scripts/statusline.sh"
 else
   STATUS_CMD="$PLUGIN_DIR/hooks/status-line.sh"
+  CLAUDE_STATUS_CMD="$PLUGIN_DIR/hooks/claude-statusline.sh"
 fi
 TITLE_CMD="$PLUGIN_DIR/scripts/title.sh"
 TMUX_HELPER="$PLUGIN_DIR/scripts/tmux-agent-status.sh"
@@ -124,6 +146,32 @@ data.statusLine = { type: "command", command: statusCmd, enabled: true };
 data.title = { type: "command", command: titleCmd, enabled: true };
 fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", "utf8");
 ' "$SETTINGS_FILE" "$STATUS_CMD" "$TITLE_CMD"
+
+# Configure Claude Code CLI (~/.claude/settings.json & ~/.claude/statusline.sh symlink)
+if [ "$CONFIGURE_CLAUDE" = "yes" ]; then
+  mkdir -p "$CLAUDE_DIR"
+  if [ -f "$CLAUDE_DIR/statusline.sh" ] && [ ! -L "$CLAUDE_DIR/statusline.sh" ]; then
+    cp "$CLAUDE_DIR/statusline.sh" "$CLAUDE_DIR/statusline.sh.bak"
+  fi
+  rm -f "$CLAUDE_DIR/statusline.sh"
+  ln -s "$CLAUDE_STATUS_CMD" "$CLAUDE_DIR/statusline.sh"
+
+  CLAUDE_SETTINGS_FILE="$CLAUDE_DIR/settings.json"
+  node -e '
+  const fs = require("node:fs");
+  const file = process.argv[1];
+  const statusCmd = process.argv[2];
+  let data = {};
+  if (fs.existsSync(file)) {
+    try {
+      data = JSON.parse(fs.readFileSync(file, "utf8"));
+      fs.copyFileSync(file, file + ".bak");
+    } catch {}
+  }
+  data.statusLine = { type: "command", command: statusCmd };
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n", "utf8");
+  ' "$CLAUDE_SETTINGS_FILE" "$CLAUDE_STATUS_CMD"
+fi
 
 # Upgrade ~/.tmux.conf to display live state, running vs. latest versions,
 # outdated alerts (⬆), and process uptimes for both `agy` and Claude Code (`X.Y.Z`).

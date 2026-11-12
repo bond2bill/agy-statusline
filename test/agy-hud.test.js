@@ -377,6 +377,98 @@ test("statusline & main: renders host, session, model, git branch, context, and 
   assert.ok(!narrowPlain.includes("d8fb3f4f-6415-4cbf-88fa-176c12c9f154"));
 });
 
+test("claude code cli: renders v2.x.xxx, effort, session_id + companion dir size, live state, tmux width, and rate_limits without overwriting native pane title", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "claude-hud-"));
+  try {
+    const sid = "6909c0ac-dc5e-45b7-8ac1-ec6667fc1077";
+    const claudeDir = path.join(tmp, ".claude");
+    const projDir = path.join(claudeDir, "projects", "-Users-ryan-repo");
+    const companionDir = path.join(projDir, sid, "subagents");
+    const sessionsDir = path.join(claudeDir, "sessions");
+    fs.mkdirSync(companionDir, { recursive: true });
+    fs.mkdirSync(sessionsDir, { recursive: true });
+
+    const transcriptPath = path.join(projDir, `${sid}.jsonl`);
+    fs.writeFileSync(transcriptPath, Buffer.alloc(4 * 1024 * 1024));
+    fs.writeFileSync(path.join(companionDir, "sub-1.jsonl"), Buffer.alloc(1024 * 1024));
+    fs.writeFileSync(
+      path.join(sessionsDir, "62088.json"),
+      JSON.stringify({ pid: 62088, sessionId: sid, name: "H_BUSD_MINIAPP", status: "busy" })
+    );
+
+    const tmuxCalls = [];
+    const mockExec = (cmd, args) => {
+      tmuxCalls.push([cmd, ...args]);
+      if (cmd === "tmux" && args[0] === "display-message") {
+        return "212\n";
+      }
+      return "";
+    };
+
+    const now = new Date("2026-11-12T07:00:00Z");
+    const claudePayload = {
+      session_id: sid,
+      session_name: "H_BUSD_MINIAPP",
+      transcript_path: transcriptPath,
+      cwd: "/Users/ryan/Automation_Solutions/RD_by_AI/agent-bus-repo",
+      version: "2.1.322",
+      model: { id: "claude-fable-5-2", display_name: "Fable 5.2" },
+      effort: { level: "high" },
+      context_window: {
+        total_input_tokens: 240000,
+        context_window_size: 1000000,
+        used_percentage: 24
+      },
+      rate_limits: {
+        seven_day: {
+          used_percentage: 57,
+          resets_at: Math.trunc(now.getTime() / 1000) + 159600
+        }
+      }
+    };
+
+    const cfg = config.defaultConfig();
+    const hostInfo = { machine: "MacMini", mode: "SSH", isSsh: true };
+    const out = main.renderStatusline(JSON.stringify(claudePayload), cfg, null, {
+      hostInfo,
+      now,
+      env: { TMUX: "/tmp/tmux-501/default,1,0", TMUX_PANE: "%29" },
+      execFileSync: mockExec,
+      sessionOpts: { claudeDir, ppid: 62088 },
+      tmuxOpts: {
+        env: { TMUX: "/tmp/tmux-501/default,1,0", TMUX_PANE: "%29" },
+        cacheFile: path.join(tmp, "tmux-cache.json"),
+        execFileSync: mockExec
+      }
+    });
+
+    const plain = ansi.strip(out);
+    assert.ok(plain.includes("MacMini·SSH"), `Expected host in: ${plain}`);
+    assert.ok(plain.includes("v2.1.322"), `Expected Claude v2.1.322 version in: ${plain}`);
+    assert.ok(plain.includes("Fable 5.2 High"), `Expected model + effort in: ${plain}`);
+    assert.ok(!plain.includes("Plan ?"), `Should not render bogus Plan ? in: ${plain}`);
+    assert.ok(plain.includes("H_BUSD_MINIAPP"), `Expected session name in: ${plain}`);
+    assert.ok(
+      plain.includes(`${sid} (5.0MB)`),
+      `Expected full UUID + 5.0MB total size on wide tmux pane in: ${plain}`
+    );
+    assert.ok(plain.includes("Working"), `Expected live Working state from sessions/<pid>.json in: ${plain}`);
+    assert.ok(plain.includes("Week:"), `Expected Week rate_limit window in: ${plain}`);
+    assert.ok(plain.includes("43%"), `Expected 43% remaining (100 - 57) in: ${plain}`);
+
+    // Verify syncTmuxTitle did NOT overwrite Claude's native select-pane -T / rename-window,
+    // and only synced @agent_ver + queried pane_width
+    assert.equal(
+      tmuxCalls.some((c) => c[1] === "select-pane" || c[1] === "rename-window"),
+      false,
+      `Must not overwrite native Claude pane/window titles: ${JSON.stringify(tmuxCalls)}`
+    );
+    assert.ok(tmuxCalls.some((c) => c.includes("@agent_ver") && c.includes("2.1.322")));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test("tmux: compares SemVer, formats etime, finds child agy/cc PIDs under zsh, and syncs outdated/uptime options", () => {
   assert.equal(tmux.compareSemver("1.4.12", "1.5.5"), -1);
   assert.equal(tmux.compareSemver("2.1.9", "2.1.322"), -1);

@@ -581,7 +581,32 @@ const SAFE_CONV_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_VER_RE = /^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z._+-]*$/;
 
 /**
- * Return the byte size of a regular file, or 0 when missing/inaccessible.
+ * Detect whether a status-line JSON payload comes from Claude Code CLI (`claude`)
+ * rather than Antigravity CLI (`agy`).
+ * @param {object} payload
+ * @returns {boolean}
+ */
+function isClaudePayload(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  if (String(payload.product || "").toLowerCase() === "antigravity") return false;
+  if (typeof payload.conversation_id === "string" && payload.conversation_id.trim() !== "") {
+    return false;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(payload, "rate_limits") ||
+    Object.prototype.hasOwnProperty.call(payload, "cost") ||
+    Object.prototype.hasOwnProperty.call(payload, "output_style") ||
+    Object.prototype.hasOwnProperty.call(payload, "scratchpad_dir") ||
+    (typeof payload.transcript_path === "string" && payload.transcript_path.includes("/.claude/"))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Return the byte size of a regular file (never following symlinks into directories),
+ * or 0 when missing/inaccessible.
  * @param {string} filePath
  * @returns {number}
  */
@@ -593,6 +618,110 @@ function safeFileSize(filePath) {
   } catch {
     return 0;
   }
+}
+
+/**
+ * Sum regular file sizes inside a companion directory (e.g. Claude `<session_id>/subagents` & `tool-results`),
+ * skipping symlinks and bounding traversal depth and entry count.
+ * @param {string} dirPath
+ * @param {number} [maxDepth]
+ * @param {{ left: number }} [budget]
+ * @returns {number}
+ */
+function safeDirFilesSize(dirPath, maxDepth = 3, budget = { left: 250 }) {
+  if (!dirPath || maxDepth < 0 || budget.left <= 0) return 0;
+  let total = 0;
+  let entries;
+  try {
+    const dst = fs.lstatSync(dirPath);
+    if (!dst.isDirectory() || dst.isSymbolicLink()) return 0;
+    entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const ent of entries) {
+    if (budget.left <= 0) break;
+    budget.left -= 1;
+    if (ent.isSymbolicLink()) continue;
+    const child = path.join(dirPath, ent.name);
+    if (ent.isFile()) {
+      try {
+        const st = fs.lstatSync(child);
+        if (st.isFile() && Number.isFinite(st.size) && st.size > 0) {
+          total += st.size;
+        }
+      } catch {}
+    } else if (ent.isDirectory() && maxDepth > 0) {
+      total += safeDirFilesSize(child, maxDepth - 1, budget);
+    }
+  }
+  return total;
+}
+
+/**
+ * Read live Claude Code session metadata (`status`, `name`, `version`) from `~/.claude/sessions/<pid>.json`.
+ * @param {object} payload
+ * @param {object} [opts]
+ * @returns {{ agentState: string, name: string, version: string }}
+ */
+function getClaudeSessionMeta(payload, opts = {}) {
+  const empty = { agentState: "", name: "", version: "" };
+  if (!payload || typeof payload !== "object") return empty;
+  const rawId = String(payload.session_id || "").trim();
+  const homeDir = opts.homeDir || os.homedir();
+  const claudeDir =
+    opts.claudeDir ||
+    process.env.AGY_CLAUDE_DIR ||
+    (homeDir ? path.join(homeDir, ".claude") : "");
+  if (!claudeDir) return empty;
+  const sessionsDir = path.join(claudeDir, "sessions");
+
+  const mapEntry = (entry) => {
+    if (!entry || typeof entry !== "object") return null;
+    if (String(entry.engine || "").toLowerCase() === "agy") return null;
+    if (rawId && typeof entry.sessionId === "string" && entry.sessionId !== rawId) return null;
+    const rawStatus = String(entry.status || "").trim().toLowerCase();
+    const agentState =
+      rawStatus === "busy" || rawStatus === "working"
+        ? "working"
+        : rawStatus === "idle"
+          ? "idle"
+          : "";
+    const name = typeof entry.name === "string" ? cleanTitle(entry.name) : "";
+    const ver =
+      typeof entry.version === "string" && SAFE_VER_RE.test(entry.version.trim())
+        ? entry.version.trim()
+        : "";
+    return { agentState, name, version: ver };
+  };
+
+  const ppid = opts.ppid ?? process.ppid;
+  if (Number.isInteger(ppid) && ppid > 1) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(sessionsDir, `${ppid}.json`), "utf8"));
+      const mapped = mapEntry(parsed);
+      if (mapped) return mapped;
+    } catch {}
+  }
+
+  if (!rawId || !SAFE_CONV_ID_RE.test(rawId)) return empty;
+  try {
+    const files = fs.readdirSync(sessionsDir);
+    let checked = 0;
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      checked += 1;
+      if (checked > 64) break;
+      try {
+        const parsed = JSON.parse(fs.readFileSync(path.join(sessionsDir, file), "utf8"));
+        if (parsed && parsed.sessionId === rawId) {
+          const mapped = mapEntry(parsed);
+          if (mapped) return mapped;
+        }
+      } catch {}
+    }
+  } catch {}
+  return empty;
 }
 
 /**
@@ -622,6 +751,7 @@ function getConversationInfo(payload, opts = {}) {
   if (!rawId || !SAFE_CONV_ID_RE.test(rawId)) return empty;
 
   const shortId = rawId.length > 8 ? rawId.slice(0, 8) : rawId;
+  const isClaude = isClaudePayload(payload);
   const homeDir = opts.homeDir || os.homedir();
   const cliDir =
     opts.cliDir ||
@@ -629,7 +759,7 @@ function getConversationInfo(payload, opts = {}) {
     (homeDir ? path.join(homeDir, ".gemini", "antigravity-cli") : "");
 
   let sizeBytes = 0;
-  if (cliDir) {
+  if (!isClaude && cliDir) {
     const dbSize = safeFileSize(path.join(cliDir, "conversations", `${rawId}.db`));
     const walSize = safeFileSize(path.join(cliDir, "conversations", `${rawId}.db-wal`));
     let transcriptSize = safeFileSize(
@@ -640,10 +770,19 @@ function getConversationInfo(payload, opts = {}) {
         path.join(cliDir, "brain", rawId, ".system_generated", "logs", "transcript.jsonl")
       );
     }
-    if (transcriptSize === 0 && typeof payload.transcript_path === "string") {
-      transcriptSize = safeFileSize(payload.transcript_path.trim());
-    }
     sizeBytes = dbSize + walSize + transcriptSize;
+  }
+
+  if (sizeBytes === 0 && typeof payload.transcript_path === "string") {
+    const tp = payload.transcript_path.trim();
+    if (tp) {
+      const mainSize = safeFileSize(tp);
+      let companionSize = 0;
+      if (isClaude || path.basename(tp) === `${rawId}.jsonl`) {
+        companionSize = safeDirFilesSize(path.join(path.dirname(tp), rawId));
+      }
+      sizeBytes = mainSize + companionSize;
+    }
   }
 
   return {
@@ -697,8 +836,37 @@ function getSessionTitle(payload, opts = {}) {
 
   const convId = String(payload.conversation_id || payload.session_id || "").trim();
   const cwd = String(payload.workspace?.current_dir || payload.cwd || "").trim();
-
   const homeDir = opts.homeDir || os.homedir();
+
+  if (isClaudePayload(payload)) {
+    const claudeHist =
+      opts.claudeHistoryPath ||
+      path.join(opts.claudeDir || process.env.AGY_CLAUDE_DIR || path.join(homeDir, ".claude"), "history.jsonl");
+    try {
+      if (convId && fs.existsSync(claudeHist)) {
+        const lines = fs.readFileSync(claudeHist, "utf8").trim().split(/\r?\n/);
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i];
+          if (!line.includes("/rename") || !line.includes(convId)) continue;
+          try {
+            const entry = JSON.parse(line);
+            if (
+              (entry.sessionId === convId || entry.conversationId === convId) &&
+              typeof entry.display === "string" &&
+              entry.display.startsWith("/rename ")
+            ) {
+              const renameTitle = cleanTitle(entry.display.slice(8));
+              if (renameTitle) return renameTitle;
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+    const meta = getClaudeSessionMeta(payload, opts);
+    if (meta.name) return meta.name;
+    return "";
+  }
+
   const historyPath =
     opts.historyPath || path.join(homeDir, ".gemini", "antigravity-cli", "history.jsonl");
 
@@ -847,6 +1015,8 @@ function resolveTmuxPane(env = process.env, pid = process.pid, execFn = cp.execF
 /**
  * Synchronize the resolved session title to the enclosing tmux pane (`select-pane -T`)
  * and tmux window (`rename-window`), using a lightweight cache to avoid redundant CLI calls.
+ * Note: For Claude Code payloads (`isClaudePayload`), native `✳` / spinner pane titles are preserved
+ * and only `@agent_ver` is synchronized.
  * @param {string} sessionTitle
  * @param {object} payload
  * @param {object} [opts]
@@ -860,6 +1030,35 @@ function syncTmuxTitle(sessionTitle, payload, opts = {}) {
   const execFn = opts.execFileSync || cp.execFileSync;
   const paneId = resolveTmuxPane(env, opts.pid || process.pid, execFn);
   if (!paneId) return false;
+
+  const rawVer = String(payload?.version || "").trim();
+  const version = SAFE_VER_RE.test(rawVer) ? rawVer : "";
+  const cacheFile = opts.cacheFile || path.join(os.tmpdir(), "agy-hud-tmux-cache.json");
+  let cache = {};
+  try {
+    if (fs.existsSync(cacheFile)) {
+      cache = JSON.parse(fs.readFileSync(cacheFile, "utf8")) || {};
+    }
+  } catch {
+    cache = {};
+  }
+
+  if (isClaudePayload(payload)) {
+    if (!version || cache[paneId]?.version === version) {
+      return false;
+    }
+    try {
+      execFn("tmux", ["set-option", "-p", "-t", paneId, "@agent_ver", version], {
+        timeout: 200,
+        stdio: "ignore"
+      });
+      cache[paneId] = { ...(cache[paneId] || {}), version, updatedAt: Date.now() };
+      fs.writeFileSync(cacheFile, JSON.stringify(cache), { encoding: "utf8", mode: 0o600 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   const state = String(payload?.agent_state || "idle").toLowerCase();
   const style = env.AGY_TITLE_STYLE || "dot";
@@ -877,18 +1076,6 @@ function syncTmuxTitle(sessionTitle, payload, opts = {}) {
   const shortTitle = sessionTitle ? truncate(cleanTitle(sessionTitle), 24) : "";
   const paneTitle = shortTitle ? `${ind} ${shortTitle}` : `${ind} ${workspace}`;
   const windowName = shortTitle;
-  const rawVer = String(payload?.version || "").trim();
-  const version = SAFE_VER_RE.test(rawVer) ? rawVer : "";
-
-  const cacheFile = opts.cacheFile || path.join(os.tmpdir(), "agy-hud-tmux-cache.json");
-  let cache = {};
-  try {
-    if (fs.existsSync(cacheFile)) {
-      cache = JSON.parse(fs.readFileSync(cacheFile, "utf8")) || {};
-    }
-  } catch {
-    cache = {};
-  }
 
   const prev = cache[paneId];
   if (
@@ -931,6 +1118,8 @@ function syncTmuxTitle(sessionTitle, payload, opts = {}) {
 }
 
 module.exports = {
+  isClaudePayload,
+  getClaudeSessionMeta,
   cleanTitle,
   truncate,
   formatBytes,
@@ -1338,7 +1527,26 @@ const {
   colorize
 } = __require("./ansi");
 const { matchModel, usagePercent } = __require("./quota");
-const { truncate } = __require("./session");
+const { truncate, isClaudePayload } = __require("./session");
+
+function formatEffortLabel(raw) {
+  const clean = String(raw ?? "").trim().toLowerCase();
+  switch (clean) {
+    case "xhigh":
+      return "xHigh";
+    case "high":
+      return "High";
+    case "medium":
+    case "med":
+      return "Med";
+    case "low":
+      return "Low";
+    case "max":
+      return "Max";
+    default:
+      return clean ? title(clean) : "";
+  }
+}
 
 function shortModelName(display) {
   let short = String(display ?? "");
@@ -1350,8 +1558,8 @@ function shortModelName(display) {
   short = short.split("Medium").join("Med");
   short = short.trim().split(/\s+/).filter(Boolean).join(" ");
   const runes = Array.from(short);
-  if (runes.length > 18) {
-    short = `${runes.slice(0, 15).join("")}...`;
+  if (runes.length > 24) {
+    short = `${runes.slice(0, 21).join("")}...`;
   }
   return short;
 }
@@ -1397,7 +1605,13 @@ function renderVersionSegment(rawVersion, config) {
   return `v${clean}`;
 }
 
-function renderModelSegment(shortModel, rawPlan, config) {
+function renderModelSegment(shortModel, rawPlan, config, isClaude = false) {
+  if (isClaude && !rawPlan) {
+    if (config.showModel && shortModel !== "") {
+      return `${withIcon(config, "\uEE9C ", "")}${shortModel}`;
+    }
+    return `${withIcon(config, "\uEE9C ", "")}Claude`;
+  }
   let plan = "Plan ?";
   if (rawPlan) {
     if (/ultra/i.test(rawPlan)) {
@@ -1451,27 +1665,43 @@ function inlineResetSuffix(config, reset) {
 
 function render(payload, opts) {
   const config = opts.config;
-  const width = (payload.terminal_width ?? 0) <= 0 ? 80 : payload.terminal_width;
-  const modelDisplay = payload.model?.display_name || payload.model?.id || "Gemini";
+  const isClaude = isClaudePayload(payload);
+  const resolvedWidth = opts.terminalWidth ?? payload.terminal_width ?? 0;
+  const width = resolvedWidth <= 0 ? 80 : resolvedWidth;
+  let modelDisplay =
+    payload.model?.display_name || payload.model?.id || (isClaude ? "Claude" : "Gemini");
+  const rawEffort = String(payload.effort?.level || "").trim();
+  if (rawEffort && !modelDisplay.toLowerCase().includes(rawEffort.toLowerCase())) {
+    const eff = formatEffortLabel(rawEffort);
+    if (eff) {
+      modelDisplay = `${modelDisplay} (${eff})`;
+    }
+  }
   const modelSegment = renderModelSegment(
     shortModelName(modelDisplay),
     payload.plan_tier ?? "",
-    config
+    config,
+    isClaude
   );
   const ctxPct = contextPercent(payload.context_window);
-  const stateLabel = state(payload.agent_state ?? "");
+  const stateLabel = state(payload.agent_state ?? opts.agentState ?? "");
+  const effectivePayload =
+    !payload.version && opts.fallbackVersion
+      ? { ...payload, version: opts.fallbackVersion }
+      : payload;
   const quota = quotaInfo(
     opts.quota,
     modelDisplay,
     payload.quota,
-    opts.now ?? new Date()
+    opts.now ?? new Date(),
+    payload.rate_limits
   );
   const sessionTitle = opts.sessionTitle ?? "";
   const hostInfo = opts.hostInfo ?? null;
   const convInfo = opts.convInfo ?? null;
   if (config.multiline) {
     return renderMultiline(
-      payload,
+      effectivePayload,
       config,
       width,
       modelSegment,
@@ -1485,7 +1715,7 @@ function render(payload, opts) {
     );
   }
   return renderSingleLine(
-    payload,
+    effectivePayload,
     config,
     width,
     modelSegment,
@@ -1526,10 +1756,11 @@ function renderMultiline(
   const convFullText = convFullRaw ? colorize(convFullRaw, colorMuted, config.color) : "";
   const convShortText = convShortRaw ? colorize(convShortRaw, colorMuted, config.color) : "";
   const modelText = colorize(modelSegment, colorBlue, config.color);
+  const cwdDir = payload.cwd || payload.workspace?.current_dir || "";
   const cwdText =
-    config.showCWD && payload.cwd
+    config.showCWD && cwdDir
       ? colorize(
-          withIcon(config, "\uF07C ", "") + path.basename(payload.cwd),
+          withIcon(config, "\uF07C ", "") + path.basename(cwdDir),
           colorYellow,
           config.color
         )
@@ -1665,7 +1896,7 @@ function renderMultiline(
   let usage2 = "";
   if (quota.hasQuota) {
     usage2 = usageLabel(config, quota, true);
-    if (quota.windows.length <= 1 && quota.reset !== "") {
+    if (!hasNamedWindows(quota) && quota.reset !== "") {
       usage2 += resetSuffix(config, quota.reset);
     }
   }
@@ -1674,7 +1905,7 @@ function renderMultiline(
     let usageNoBar = "";
     if (quota.hasQuota) {
       usageNoBar = usageLabel(config, quota, false);
-      if (quota.windows.length <= 1 && quota.reset !== "") {
+      if (!hasNamedWindows(quota) && quota.reset !== "") {
         usageNoBar += resetSuffix(config, quota.reset);
       }
     }
@@ -1687,7 +1918,7 @@ function renderMultiline(
     let usageCompact = "";
     if (quota.hasQuota) {
       usageCompact = usageLabel(config, quota, false);
-      if (quota.windows.length <= 1 && quota.reset !== "") {
+      if (!hasNamedWindows(quota) && quota.reset !== "") {
         usageCompact += resetSuffix(config, quota.reset);
       }
     }
@@ -1748,7 +1979,7 @@ function renderSingleLine(
   let usage2 = "";
   if (quota.hasQuota) {
     let text = usageLabel(config, quota, false);
-    if (quota.windows.length <= 1 && quota.reset !== "") {
+    if (!hasNamedWindows(quota) && quota.reset !== "") {
       text += resetSuffix(config, quota.reset);
     }
     usage2 = colorize(text, colorMuted, config.color);
@@ -1800,7 +2031,7 @@ function renderSingleLine(
   return fit(`${formatInt(ctxPct)}% ${stateLabel}`, width);
 }
 
-function quotaInfo(cache, modelDisplay, officialQuota, now) {
+function quotaInfo(cache, modelDisplay, officialQuota, now, rateLimits = null) {
   const cacheInfo = cacheQuotaInfo(cache, modelDisplay);
   const official = officialQuotaInfo(officialQuota, modelDisplay);
   if (official !== null) {
@@ -1814,10 +2045,55 @@ function quotaInfo(cache, modelDisplay, officialQuota, now) {
     }
     return official;
   }
+  const claudeRl = claudeRateLimitsInfo(rateLimits, now);
+  if (claudeRl !== null) {
+    return claudeRl;
+  }
   if (cacheInfo !== null) {
     return cacheInfo;
   }
   return noQuota();
+}
+
+function claudeRateLimitsInfo(rateLimits, now) {
+  if (!rateLimits || typeof rateLimits !== "object") {
+    return null;
+  }
+  const defs = [
+    { key: "five_hour", label: "5h" },
+    { key: "seven_day", label: "Week" }
+  ];
+  const buckets = [];
+  let sawKnownBucket = false;
+  const nowSec = Math.trunc((now instanceof Date ? now.getTime() : Date.now()) / 1000);
+  for (const { key, label } of defs) {
+    if (!Object.prototype.hasOwnProperty.call(rateLimits, key)) {
+      continue;
+    }
+    const bucket = rateLimits[key];
+    if (!bucket || typeof bucket !== "object") {
+      continue;
+    }
+    sawKnownBucket = true;
+    const rawUsed = Number(bucket.used_percentage);
+    if (!Number.isFinite(rawUsed)) {
+      continue;
+    }
+    const usagePct = clampInt(Math.trunc(rawUsed + 0.5));
+    let reset = "";
+    const resetsAt = Number(bucket.resets_at);
+    if (usagePct > 0 && Number.isFinite(resetsAt) && resetsAt > 0) {
+      const diffSec = resetsAt - nowSec;
+      if (diffSec > 0) {
+        reset = formatResetDuration(diffSec);
+      }
+    }
+    buckets.push({ label, usagePct, reset });
+  }
+  if (buckets.length === 0) {
+    return sawKnownBucket ? noQuota() : null;
+  }
+  return quotaDisplay(buckets);
 }
 
 function cacheQuotaInfo(cache, modelDisplay) {
@@ -2010,8 +2286,14 @@ function contextPercent(ctx) {
   return clampInt(Math.trunc(upstream + 0.5));
 }
 
+function hasNamedWindows(quota) {
+  return (
+    quota.windows.length > 1 || (quota.windows.length === 1 && Boolean(quota.windows[0].label))
+  );
+}
+
 function usageLabel(config, quota, withBar) {
-  if (quota.windows.length > 1) {
+  if (hasNamedWindows(quota)) {
     return `Usage ${quota.windows
       .map((window) => usageWindowLabel(config, window, withBar))
       .join(" │ ")}`;
@@ -2806,11 +3088,17 @@ const { load, matchModel } = __require("./quota");
 const { refreshQuota } = __require("./quotaProbe");
 const { branch, sanitizedBranch, gitBranchFromPayload } = __require("./gitinfo");
 const { getHostAndMode } = __require("./host");
-const { getSessionTitle, getConversationInfo, syncTmuxTitle } = __require("./session");
+const {
+  isClaudePayload,
+  getClaudeSessionMeta,
+  getSessionTitle,
+  getConversationInfo,
+  syncTmuxTitle
+} = __require("./session");
 const { render } = __require("./statusline");
 const { collectAndSyncTmux } = __require("./tmux");
 
-const version = "1.1.0";
+const version = "1.2.0";
 const consumedQuotaRefreshMs = 15 * 1000;
 const untouchedQuotaRefreshMs = 30 * 1000;
 
@@ -2868,6 +3156,53 @@ function shouldUseProcessCWD(payloadCWD) {
 }
 
 /**
+ * Resolve terminal column width when `payload.terminal_width` is absent (e.g. Claude Code CLI).
+ * Queries `tmux display-message -p '#{pane_width}'` when inside tmux, reserving 4 cols for TUI padding.
+ * @param {object} payload
+ * @param {boolean} isClaude
+ * @param {object} [opts]
+ * @returns {number}
+ */
+function resolveTerminalWidth(payload, isClaude = false, opts = {}) {
+  if ((payload.terminal_width ?? 0) > 0) {
+    return payload.terminal_width;
+  }
+  if ((opts.terminalWidth ?? 0) > 0) {
+    return opts.terminalWidth;
+  }
+  const env = opts.env || process.env;
+  const envCols = Number(env?.AGY_HUD_WIDTH || env?.COLUMNS || 0);
+  if (Number.isFinite(envCols) && envCols > 0) {
+    return envCols;
+  }
+  if ((process.stdout?.columns ?? 0) > 0) {
+    return process.stdout.columns;
+  }
+  if (env?.TMUX && opts.syncTmux !== false) {
+    try {
+      const execFn = opts.execFileSync || cp.execFileSync;
+      const args =
+        typeof env.TMUX_PANE === "string" && env.TMUX_PANE.trim().startsWith("%")
+          ? ["display-message", "-p", "-t", env.TMUX_PANE.trim(), "#{pane_width}"]
+          : ["display-message", "-p", "#{pane_width}"];
+      const rawW = Number(
+        String(
+          execFn("tmux", args, {
+            encoding: "utf8",
+            timeout: 150,
+            stdio: ["ignore", "pipe", "ignore"]
+          }) || ""
+        ).trim()
+      );
+      if (Number.isFinite(rawW) && rawW > 0) {
+        return isClaude ? Math.max(40, rawW - 4) : rawW;
+      }
+    } catch {}
+  }
+  return isClaude ? 120 : 80;
+}
+
+/**
  * Render the status line string from raw JSON input, configuration, and optional quota cache.
  * @param {string} input
  * @param {object} [cfg]
@@ -2888,6 +3223,12 @@ function renderStatusline(input, cfg = defaultConfig(), cache = null, opts = {})
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return "agy-hud";
   }
+  const isClaude = isClaudePayload(payload);
+  const claudeMeta = isClaude
+    ? opts.claudeMeta ?? getClaudeSessionMeta(payload, opts.sessionOpts)
+    : null;
+  const terminalWidth = resolveTerminalWidth(payload, isClaude, opts);
+
   let branchName = "";
   if (cfg.showGitBranch) {
     branchName = gitBranchFromPayload(payload);
@@ -2904,6 +3245,9 @@ function renderStatusline(input, cfg = defaultConfig(), cache = null, opts = {})
   let sessionTitle = "";
   if (cfg.showSession) {
     sessionTitle = opts.sessionTitle ?? getSessionTitle(payload, opts.sessionOpts);
+    if (sessionTitle === "" && claudeMeta?.name) {
+      sessionTitle = claudeMeta.name;
+    }
   }
   if (opts.syncTmux !== false) {
     syncTmuxTitle(sessionTitle, payload, opts.tmuxOpts);
@@ -2919,11 +3263,14 @@ function renderStatusline(input, cfg = defaultConfig(), cache = null, opts = {})
   try {
     return render(payload, {
       config: cfg,
-      quota: cache,
+      quota: isClaude ? null : cache,
       gitBranch: branchName,
       sessionTitle,
       hostInfo,
       convInfo,
+      terminalWidth,
+      agentState: opts.agentState ?? claudeMeta?.agentState,
+      fallbackVersion: opts.fallbackVersion ?? claudeMeta?.version,
       now: opts.now
     });
   } catch {
@@ -3011,20 +3358,24 @@ async function runCli(args, deps = {}) {
     const cfg = loadFromPaths(configPaths());
     const raw = await readStdin(deps.stdin ?? process.stdin);
     const payload = parsePayload(raw);
-    const cachePath = quotaCacheWritePath();
-    const [cache, ok, primaryUnloadable] = loadQuotaFromCandidates(quotaCacheReadCandidates());
-    const [displayCache, refreshed] = await refreshQuotaBeforeRenderIfNeeded(
-      cachePath,
-      ok ? cache : null,
-      payload,
-      deps.refreshQuota ?? refreshQuota
-    );
-    triggerBackgroundRefreshIfNeeded(
-      cachePath,
-      displayCache,
-      payload,
-      primaryUnloadable && !refreshed
-    );
+    let displayCache = null;
+    if (!isClaudePayload(payload)) {
+      const cachePath = quotaCacheWritePath();
+      const [cache, ok, primaryUnloadable] = loadQuotaFromCandidates(quotaCacheReadCandidates());
+      const [nextCache, refreshed] = await refreshQuotaBeforeRenderIfNeeded(
+        cachePath,
+        ok ? cache : null,
+        payload,
+        deps.refreshQuota ?? refreshQuota
+      );
+      displayCache = nextCache;
+      triggerBackgroundRefreshIfNeeded(
+        cachePath,
+        displayCache,
+        payload,
+        primaryUnloadable && !refreshed
+      );
+    }
     stdout(`${renderStatusline(raw, cfg, displayCache)}\n`);
     return 0;
   }

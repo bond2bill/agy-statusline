@@ -4,6 +4,14 @@ All notable changes to **`agy-statusline`** are documented in this file.
 
 ---
 
+## [1.2.0] - 2026-11-12
+
+### Added
+- **Unified Claude Code CLI Status-Line HUD (`hooks/claude-statusline.sh`, `src/session.js`, `src/statusline.js`, `src/main.js`)**: Renders the same 2-line HUD layout for Claude Code CLI (`claude`) — including `Host·Mode`, running `v2.x.xxx` version, `Model + Effort` (`xHigh`, `High`, `Max`), Session Title (`session_name`, `/rename`, `~/.claude/sessions/<pid>.json`), responsive full/8-char `session_id` + real disk size (`<id>.jsonl` + `<id>/subagents` & `tool-results`), CWD, Git branch, live `Working`/`Idle` state, Context bar, and `rate_limits` (`5h` & `Week` countdowns).
+- **Automatic `tmux` Pane Width Resolution**: Resolves terminal width via `tmux display-message -p '#{pane_width}'` when `terminal_width` is omitted by Claude Code CLI, preserving responsive UUID shortening across split panes while keeping Claude Code's native `✳` / spinner pane titles intact.
+
+---
+
 ## [1.1.0] - 2026-11-12
 
 ### Added

@@ -1,6 +1,6 @@
 # agy-statusline (`agy-hud`) — Tài Liệu Tiếng Việt
 
-> **Bộ công cụ Status-Line HUD đa tầng, Pure-Bash Statusline và Terminal / `tmux` Title động dành cho cộng đồng sử dụng Antigravity CLI (`agy`).**
+> **Bộ công cụ Status-Line HUD đa tầng, Pure-Bash Statusline và Terminal / `tmux` Fleet Monitor thống nhất cho cả Antigravity CLI (`agy`) và Claude Code CLI (`claude`).**
 
 🌐 **Languages / Ngôn ngữ:** [🇬🇧 English (`README.md`)](README.md) | **🇻🇳 Tiếng Việt**
 
@@ -24,7 +24,7 @@ Khi làm việc trên nhiều máy (ví dụ: dùng MacBook SSH vào Mac mini ho
 
 ### 1.3. Hai chế độ Status-Line linh hoạt
 1. **Chế độ Node.js HUD Plugin (`--hud`, mặc định)**:
-   - Giao diện giàu thông tin: `Host·Mode`, `Model | Plan Tier`, `Session Title`, `Conversation ID` (màn rộng hiện full UUID, màn hẹp tự thu gọn 8 ký tự) kèm `Dung lượng thực tế (.db + .db-wal + transcript_full.jsonl)`, `Workspace`, `Git Branch` (hỗ trợ cả git worktree), `Agent State`, `Context Bar` và `Dual-Window Quota (5h & Week)`.
+   - Giao diện giàu thông tin đồng nhất cho **cả AGY lẫn Claude Code CLI** (`hooks/status-line.sh` & `hooks/claude-statusline.sh`): `Host·Mode`, `Version đang chạy (v1.x.x / v2.x.xxx)`, `Model + Effort / Plan Tier`, `Session Title`, `Conversation/Session ID` (màn rộng hiện full UUID, màn hẹp tự thu gọn 8 ký tự) kèm `Dung lượng thực tế` (`.db + .db-wal + transcript_full.jsonl` cho AGY; `.jsonl + subagents/tool-results` cho Claude Code), `Workspace`, `Git Branch`, `Agent State`, `Context Bar` và `Dual-Window Quota / Rate Limits (5h & Week)`.
    - Tích hợp bộ giám sát `tmux` (`scripts/tmux-agent-status.sh`) cho cả `agy` lẫn Claude Code (`*.*.*`): hiển thị Version thực đang chạy so với bản mới trên đĩa (`⬆`), chấm trạng thái `●`/`○`, Uptime tiến trình trên viền Pane, cờ `⬆` trên Tab Window và tổng quan toàn máy ở góc phải đáy `tmux`.
 2. **Chế độ Pure-Bash (`--bash`)**:
    - Sử dụng `scripts/statusline.sh` thuần Bash + `jq` với 3 mức co giãn: **Wide (≥120 cột)**, **Medium (80–119 cột)** và **Narrow (<80 cột)**.

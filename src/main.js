@@ -16,11 +16,17 @@ const { load, matchModel } = require("./quota");
 const { refreshQuota } = require("./quotaProbe");
 const { branch, sanitizedBranch, gitBranchFromPayload } = require("./gitinfo");
 const { getHostAndMode } = require("./host");
-const { getSessionTitle, getConversationInfo, syncTmuxTitle } = require("./session");
+const {
+  isClaudePayload,
+  getClaudeSessionMeta,
+  getSessionTitle,
+  getConversationInfo,
+  syncTmuxTitle
+} = require("./session");
 const { render } = require("./statusline");
 const { collectAndSyncTmux } = require("./tmux");
 
-const version = "1.1.0";
+const version = "1.2.0";
 const consumedQuotaRefreshMs = 15 * 1000;
 const untouchedQuotaRefreshMs = 30 * 1000;
 
@@ -78,6 +84,53 @@ function shouldUseProcessCWD(payloadCWD) {
 }
 
 /**
+ * Resolve terminal column width when `payload.terminal_width` is absent (e.g. Claude Code CLI).
+ * Queries `tmux display-message -p '#{pane_width}'` when inside tmux, reserving 4 cols for TUI padding.
+ * @param {object} payload
+ * @param {boolean} isClaude
+ * @param {object} [opts]
+ * @returns {number}
+ */
+function resolveTerminalWidth(payload, isClaude = false, opts = {}) {
+  if ((payload.terminal_width ?? 0) > 0) {
+    return payload.terminal_width;
+  }
+  if ((opts.terminalWidth ?? 0) > 0) {
+    return opts.terminalWidth;
+  }
+  const env = opts.env || process.env;
+  const envCols = Number(env?.AGY_HUD_WIDTH || env?.COLUMNS || 0);
+  if (Number.isFinite(envCols) && envCols > 0) {
+    return envCols;
+  }
+  if ((process.stdout?.columns ?? 0) > 0) {
+    return process.stdout.columns;
+  }
+  if (env?.TMUX && opts.syncTmux !== false) {
+    try {
+      const execFn = opts.execFileSync || cp.execFileSync;
+      const args =
+        typeof env.TMUX_PANE === "string" && env.TMUX_PANE.trim().startsWith("%")
+          ? ["display-message", "-p", "-t", env.TMUX_PANE.trim(), "#{pane_width}"]
+          : ["display-message", "-p", "#{pane_width}"];
+      const rawW = Number(
+        String(
+          execFn("tmux", args, {
+            encoding: "utf8",
+            timeout: 150,
+            stdio: ["ignore", "pipe", "ignore"]
+          }) || ""
+        ).trim()
+      );
+      if (Number.isFinite(rawW) && rawW > 0) {
+        return isClaude ? Math.max(40, rawW - 4) : rawW;
+      }
+    } catch {}
+  }
+  return isClaude ? 120 : 80;
+}
+
+/**
  * Render the status line string from raw JSON input, configuration, and optional quota cache.
  * @param {string} input
  * @param {object} [cfg]
@@ -98,6 +151,12 @@ function renderStatusline(input, cfg = defaultConfig(), cache = null, opts = {})
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return "agy-hud";
   }
+  const isClaude = isClaudePayload(payload);
+  const claudeMeta = isClaude
+    ? opts.claudeMeta ?? getClaudeSessionMeta(payload, opts.sessionOpts)
+    : null;
+  const terminalWidth = resolveTerminalWidth(payload, isClaude, opts);
+
   let branchName = "";
   if (cfg.showGitBranch) {
     branchName = gitBranchFromPayload(payload);
@@ -114,6 +173,9 @@ function renderStatusline(input, cfg = defaultConfig(), cache = null, opts = {})
   let sessionTitle = "";
   if (cfg.showSession) {
     sessionTitle = opts.sessionTitle ?? getSessionTitle(payload, opts.sessionOpts);
+    if (sessionTitle === "" && claudeMeta?.name) {
+      sessionTitle = claudeMeta.name;
+    }
   }
   if (opts.syncTmux !== false) {
     syncTmuxTitle(sessionTitle, payload, opts.tmuxOpts);
@@ -129,11 +191,14 @@ function renderStatusline(input, cfg = defaultConfig(), cache = null, opts = {})
   try {
     return render(payload, {
       config: cfg,
-      quota: cache,
+      quota: isClaude ? null : cache,
       gitBranch: branchName,
       sessionTitle,
       hostInfo,
       convInfo,
+      terminalWidth,
+      agentState: opts.agentState ?? claudeMeta?.agentState,
+      fallbackVersion: opts.fallbackVersion ?? claudeMeta?.version,
       now: opts.now
     });
   } catch {
@@ -221,20 +286,24 @@ async function runCli(args, deps = {}) {
     const cfg = loadFromPaths(configPaths());
     const raw = await readStdin(deps.stdin ?? process.stdin);
     const payload = parsePayload(raw);
-    const cachePath = quotaCacheWritePath();
-    const [cache, ok, primaryUnloadable] = loadQuotaFromCandidates(quotaCacheReadCandidates());
-    const [displayCache, refreshed] = await refreshQuotaBeforeRenderIfNeeded(
-      cachePath,
-      ok ? cache : null,
-      payload,
-      deps.refreshQuota ?? refreshQuota
-    );
-    triggerBackgroundRefreshIfNeeded(
-      cachePath,
-      displayCache,
-      payload,
-      primaryUnloadable && !refreshed
-    );
+    let displayCache = null;
+    if (!isClaudePayload(payload)) {
+      const cachePath = quotaCacheWritePath();
+      const [cache, ok, primaryUnloadable] = loadQuotaFromCandidates(quotaCacheReadCandidates());
+      const [nextCache, refreshed] = await refreshQuotaBeforeRenderIfNeeded(
+        cachePath,
+        ok ? cache : null,
+        payload,
+        deps.refreshQuota ?? refreshQuota
+      );
+      displayCache = nextCache;
+      triggerBackgroundRefreshIfNeeded(
+        cachePath,
+        displayCache,
+        payload,
+        primaryUnloadable && !refreshed
+      );
+    }
     stdout(`${renderStatusline(raw, cfg, displayCache)}\n`);
     return 0;
   }

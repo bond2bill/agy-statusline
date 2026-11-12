@@ -1,6 +1,6 @@
 # agy-statusline (`agy-hud`)
 
-> **High-density Status-Line HUD, Pure-Bash Statusline & Dynamic Terminal / tmux Title Suite for Antigravity CLI (`agy`).**
+> **High-density Status-Line HUD, Pure-Bash Statusline & Dynamic Terminal / tmux Fleet Monitor for Antigravity CLI (`agy`) and Claude Code CLI (`claude`).**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js >= 18](https://img.shields.io/badge/Node.js-%3E%3D18-339933.svg)](package.json)
@@ -21,6 +21,7 @@
    - **Host & Connection Detection (`host` segment)**: Automatically detects hardware (`MacMini`, `Laptop`, or hostname) and connection context (`Local` vs `SSH`, including active `tmux` client ancestry) — eliminating multi-machine confusion when remoting from a Laptop into a Mac mini.
    - **Real-Time `/rename` Session Title & `tmux` Sync (`session` segment)**: Instant `/rename` reactivity via `history.jsonl` (matching `conversationId` or `workspace` on brand-new sessions before the first prompt), `conversation_title` payload, and SQLite (`~/.gemini/antigravity-cli/conversation_summaries.db`). Automatically synchronizes both the enclosing `tmux` pane title (`tmux select-pane -T`) and window name (`tmux rename-window`).
    - **Responsive Conversation ID & Storage Size (`conversation` segment)**: Displays full 36-char Conversation UUID on wide terminals (compacting to 8-char short ID on narrower splits) alongside real storage footprint (`SQLite .db + .db-wal + transcript_full.jsonl`).
+   - **Unified Antigravity & Claude Code CLI HUD**: Renders the same 2-line HUD layout (`Host·Mode`, running `v1.x.x` / `v2.x.xxx` version, `Model + Effort`, Session Title, responsive UUID + real storage size, CWD, Git branch, live `Working`/`Idle` state, Context bar, and `5h` & `Week` quota/rate-limit windows) across both **Antigravity CLI (`agy`)** and **Claude Code CLI (`claude`)** via `hooks/status-line.sh` and `hooks/claude-statusline.sh`.
    - **Single-Pass `tmux` Fleet Version & Uptime Monitor (`src/tmux.js`)**: Tracks exact running versions vs. latest disk binaries and true child process uptimes for both `agy` and Claude Code (`X.Y.Z`) on `tmux` pane borders, window tabs, and `status-right`.
    - **Git Workspace Intelligence (`workspace` segment)**: Fast, zero-subprocess `.git/HEAD` branch resolver supporting standard repositories, worktrees, and submodules.
    - **Context Window Bar (`context` segment)**: Visual progress bar with color-coded warning/critical thresholds.

@@ -44,6 +44,8 @@ NUM_COLOR="${FG_BRIGHT_WHITE}${B}"
   read -r CONV_TITLE || true
   read -r CWD || true
   read -r AGY_VER || true
+  read -r TRANSCRIPT_PATH || true
+  read -r IS_CLAUDE || true
 } <<< "$(
   jq -r '
     (.agent_state // "idle"),
@@ -55,13 +57,24 @@ NUM_COLOR="${FG_BRIGHT_WHITE}${B}"
     (if .subagents | type == "array" then (.subagents | length) else 0 end),
     (.task_count // 0),
     (.model.display_name // ""),
-    (.terminal_width // 80),
+    (.terminal_width // 0),
     (.conversation_id // .session_id // ""),
     (.session_name // .title // .conversation_title // ""),
     (.workspace.current_dir // .cwd // ""),
-    (.version // "")
-  ' 2>/dev/null || printf "idle\n0\n\nfalse\nfalse\n0\n0\n0\n\n80\n\n\n\n\n"
+    (.version // ""),
+    (.transcript_path // ""),
+    (if (.product // "") != "antigravity" and ((.conversation_id // "") == "") and (has("rate_limits") or has("cost") or ((.transcript_path // "") | contains("/.claude/"))) then "1" else "0" end)
+  ' 2>/dev/null || printf "idle\n0\n\nfalse\nfalse\n0\n0\n0\n\n0\n\n\n\n\n\n0\n"
 )"
+
+if [ "${COLS:-0}" -le 0 ] 2>/dev/null; then
+  if [ -n "${TMUX:-}" ] && [ "${AGY_TMUX_NO_SYNC:-0}" != "1" ]; then
+    COLS=$(tmux display-message -p ${TMUX_PANE:+-t "$TMUX_PANE"} '#{pane_width}' 2>/dev/null || echo 80)
+  else
+    COLS="${COLUMNS:-80}"
+  fi
+fi
+case "$COLS" in ''|*[!0-9]*) COLS=80 ;; esac
 
 VER_BADGE=""
 if [[ "${AGY_VER:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z._+-]*$ ]]; then
@@ -162,6 +175,9 @@ if [ -n "${CONV_ID:-}" ]; then
     TR_B=$(file_bytes "$CLI_HOME/brain/${CONV_ID}/.system_generated/logs/transcript.jsonl")
   fi
   TOT_B=$((DB_B + WAL_B + TR_B))
+  if [ "$TOT_B" -eq 0 ] && [ -n "${TRANSCRIPT_PATH:-}" ]; then
+    TOT_B=$(file_bytes "$TRANSCRIPT_PATH")
+  fi
   SIZE_TXT=""
   if [ "$TOT_B" -ge 1073741824 ]; then
     SIZE_TXT=$(LC_NUMERIC=C awk -v b="$TOT_B" 'BEGIN { printf "%.2fGB", b/1073741824 }')
@@ -213,7 +229,7 @@ fi
 if [ -n "$SESSION_TITLE" ]; then
   SESSION_TITLE=$(echo "$SESSION_TITLE" | sed -E "s/^[#*\`\"'[:space:]]+//; s/[#*\`\"'[:space:]]+$//")
   SES="${FG_GRAY} ╱ ${FG_BRIGHT_CYAN}${SESSION_TITLE}${R}"
-  if [ -n "${TMUX:-}" ] && [ "${AGY_TMUX_NO_SYNC:-0}" != "1" ]; then
+  if [ -n "${TMUX:-}" ] && [ "${AGY_TMUX_NO_SYNC:-0}" != "1" ] && [ "${IS_CLAUDE:-0}" != "1" ]; then
     SHORT_TMUX_TITLE="$SESSION_TITLE"
     if [ "${#SHORT_TMUX_TITLE}" -gt 24 ]; then
       SHORT_TMUX_TITLE="${SHORT_TMUX_TITLE:0:23}…"

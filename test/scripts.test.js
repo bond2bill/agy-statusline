@@ -132,12 +132,19 @@ test("install.sh installs plugin, scripts, updates settings.json, and upgrades .
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agy-install-"));
   try {
     const cliDir = path.join(tmp, "antigravity-cli");
+    const claudeDir = path.join(tmp, "claude");
     const pluginDir = path.join(tmp, "plugins", "agy-hud");
     const tmuxConf = path.join(tmp, ".tmux.conf");
     fs.mkdirSync(cliDir, { recursive: true });
-    // Pre-seed legacy orphaned scripts in cliDir to verify install.sh cleans them up
+    fs.mkdirSync(claudeDir, { recursive: true });
+    // Pre-seed legacy orphaned scripts in cliDir & claudeDir to verify install.sh cleans/backs them up
     fs.writeFileSync(path.join(cliDir, "statusline.sh"), "#!/bin/sh\n");
     fs.writeFileSync(path.join(cliDir, "title.sh"), "#!/bin/sh\n");
+    fs.writeFileSync(path.join(claudeDir, "statusline.sh"), "#!/bin/bash\necho legacy\n");
+    fs.writeFileSync(
+      path.join(claudeDir, "settings.json"),
+      JSON.stringify({ model: "fable" }, null, 2)
+    );
     fs.writeFileSync(
       path.join(cliDir, "settings.json"),
       JSON.stringify({ model: "Gemini 4 Argon (High)" }, null, 2)
@@ -157,6 +164,7 @@ test("install.sh installs plugin, scripts, updates settings.json, and upgrades .
       env: {
         ...process.env,
         AGY_CLI_DIR: cliDir,
+        AGY_CLAUDE_DIR: claudeDir,
         AGY_PLUGIN_DIR: pluginDir,
         AGY_TMUX_CONF: tmuxConf
       }
@@ -164,10 +172,50 @@ test("install.sh installs plugin, scripts, updates settings.json, and upgrades .
 
     assert.ok(fs.existsSync(path.join(pluginDir, "dist", "agy-hud.js")));
     assert.ok(fs.existsSync(path.join(pluginDir, "hooks", "status-line.sh")));
+    assert.ok(fs.existsSync(path.join(pluginDir, "hooks", "claude-statusline.sh")));
     assert.ok(fs.existsSync(path.join(pluginDir, "scripts", "title.sh")));
     assert.ok(fs.existsSync(path.join(pluginDir, "scripts", "tmux-agent-status.sh")));
     assert.equal(fs.existsSync(path.join(cliDir, "statusline.sh")), false);
     assert.equal(fs.existsSync(path.join(cliDir, "title.sh")), false);
+
+    // Verify Claude Code CLI symlink + backup + settings.json + symlink execution
+    assert.ok(fs.existsSync(path.join(claudeDir, "statusline.sh.bak")));
+    assert.equal(fs.lstatSync(path.join(claudeDir, "statusline.sh")).isSymbolicLink(), true);
+    assert.equal(
+      fs.readlinkSync(path.join(claudeDir, "statusline.sh")),
+      path.join(pluginDir, "hooks", "claude-statusline.sh")
+    );
+    const updatedClaudeSettings = JSON.parse(
+      fs.readFileSync(path.join(claudeDir, "settings.json"), "utf8")
+    );
+    assert.equal(updatedClaudeSettings.model, "fable");
+    assert.equal(
+      updatedClaudeSettings.statusLine.command,
+      path.join(pluginDir, "hooks", "claude-statusline.sh")
+    );
+    const claudeOut = cp.execFileSync("bash", [path.join(claudeDir, "statusline.sh")], {
+      input: JSON.stringify({
+        session_id: "a14ac7d0-cc0f-4df5-be8c-5c5af88a820b",
+        session_name: "REG_GROK_X",
+        version: "2.1.322",
+        model: { display_name: "Opus 4.8" },
+        effort: { level: "xhigh" },
+        context_window: { used_percentage: 15 },
+        rate_limits: null
+      }),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        AGY_HOST_LABEL: "MacMini",
+        SSH_CONNECTION: "127.0.0.1 1 127.0.0.1 22",
+        AGY_HUD_WIDTH: "180",
+        AGY_TMUX_NO_SYNC: "1"
+      }
+    });
+    const claudePlain = strip(claudeOut);
+    assert.ok(claudePlain.includes("v2.1.322"), `Expected v2.1.322 via symlink in: ${claudePlain}`);
+    assert.ok(claudePlain.includes("Opus 4.8 xHigh"), `Expected Opus 4.8 xHigh in: ${claudePlain}`);
+    assert.ok(claudePlain.includes("REG_GROK_X"), `Expected REG_GROK_X in: ${claudePlain}`);
 
     const updatedSettings = JSON.parse(
       fs.readFileSync(path.join(cliDir, "settings.json"), "utf8")

@@ -24,7 +24,26 @@ const {
   colorize
 } = require("./ansi");
 const { matchModel, usagePercent } = require("./quota");
-const { truncate } = require("./session");
+const { truncate, isClaudePayload } = require("./session");
+
+function formatEffortLabel(raw) {
+  const clean = String(raw ?? "").trim().toLowerCase();
+  switch (clean) {
+    case "xhigh":
+      return "xHigh";
+    case "high":
+      return "High";
+    case "medium":
+    case "med":
+      return "Med";
+    case "low":
+      return "Low";
+    case "max":
+      return "Max";
+    default:
+      return clean ? title(clean) : "";
+  }
+}
 
 function shortModelName(display) {
   let short = String(display ?? "");
@@ -36,8 +55,8 @@ function shortModelName(display) {
   short = short.split("Medium").join("Med");
   short = short.trim().split(/\s+/).filter(Boolean).join(" ");
   const runes = Array.from(short);
-  if (runes.length > 18) {
-    short = `${runes.slice(0, 15).join("")}...`;
+  if (runes.length > 24) {
+    short = `${runes.slice(0, 21).join("")}...`;
   }
   return short;
 }
@@ -83,7 +102,13 @@ function renderVersionSegment(rawVersion, config) {
   return `v${clean}`;
 }
 
-function renderModelSegment(shortModel, rawPlan, config) {
+function renderModelSegment(shortModel, rawPlan, config, isClaude = false) {
+  if (isClaude && !rawPlan) {
+    if (config.showModel && shortModel !== "") {
+      return `${withIcon(config, "\uEE9C ", "")}${shortModel}`;
+    }
+    return `${withIcon(config, "\uEE9C ", "")}Claude`;
+  }
   let plan = "Plan ?";
   if (rawPlan) {
     if (/ultra/i.test(rawPlan)) {
@@ -137,27 +162,43 @@ function inlineResetSuffix(config, reset) {
 
 function render(payload, opts) {
   const config = opts.config;
-  const width = (payload.terminal_width ?? 0) <= 0 ? 80 : payload.terminal_width;
-  const modelDisplay = payload.model?.display_name || payload.model?.id || "Gemini";
+  const isClaude = isClaudePayload(payload);
+  const resolvedWidth = opts.terminalWidth ?? payload.terminal_width ?? 0;
+  const width = resolvedWidth <= 0 ? 80 : resolvedWidth;
+  let modelDisplay =
+    payload.model?.display_name || payload.model?.id || (isClaude ? "Claude" : "Gemini");
+  const rawEffort = String(payload.effort?.level || "").trim();
+  if (rawEffort && !modelDisplay.toLowerCase().includes(rawEffort.toLowerCase())) {
+    const eff = formatEffortLabel(rawEffort);
+    if (eff) {
+      modelDisplay = `${modelDisplay} (${eff})`;
+    }
+  }
   const modelSegment = renderModelSegment(
     shortModelName(modelDisplay),
     payload.plan_tier ?? "",
-    config
+    config,
+    isClaude
   );
   const ctxPct = contextPercent(payload.context_window);
-  const stateLabel = state(payload.agent_state ?? "");
+  const stateLabel = state(payload.agent_state ?? opts.agentState ?? "");
+  const effectivePayload =
+    !payload.version && opts.fallbackVersion
+      ? { ...payload, version: opts.fallbackVersion }
+      : payload;
   const quota = quotaInfo(
     opts.quota,
     modelDisplay,
     payload.quota,
-    opts.now ?? new Date()
+    opts.now ?? new Date(),
+    payload.rate_limits
   );
   const sessionTitle = opts.sessionTitle ?? "";
   const hostInfo = opts.hostInfo ?? null;
   const convInfo = opts.convInfo ?? null;
   if (config.multiline) {
     return renderMultiline(
-      payload,
+      effectivePayload,
       config,
       width,
       modelSegment,
@@ -171,7 +212,7 @@ function render(payload, opts) {
     );
   }
   return renderSingleLine(
-    payload,
+    effectivePayload,
     config,
     width,
     modelSegment,
@@ -212,10 +253,11 @@ function renderMultiline(
   const convFullText = convFullRaw ? colorize(convFullRaw, colorMuted, config.color) : "";
   const convShortText = convShortRaw ? colorize(convShortRaw, colorMuted, config.color) : "";
   const modelText = colorize(modelSegment, colorBlue, config.color);
+  const cwdDir = payload.cwd || payload.workspace?.current_dir || "";
   const cwdText =
-    config.showCWD && payload.cwd
+    config.showCWD && cwdDir
       ? colorize(
-          withIcon(config, "\uF07C ", "") + path.basename(payload.cwd),
+          withIcon(config, "\uF07C ", "") + path.basename(cwdDir),
           colorYellow,
           config.color
         )
@@ -351,7 +393,7 @@ function renderMultiline(
   let usage2 = "";
   if (quota.hasQuota) {
     usage2 = usageLabel(config, quota, true);
-    if (quota.windows.length <= 1 && quota.reset !== "") {
+    if (!hasNamedWindows(quota) && quota.reset !== "") {
       usage2 += resetSuffix(config, quota.reset);
     }
   }
@@ -360,7 +402,7 @@ function renderMultiline(
     let usageNoBar = "";
     if (quota.hasQuota) {
       usageNoBar = usageLabel(config, quota, false);
-      if (quota.windows.length <= 1 && quota.reset !== "") {
+      if (!hasNamedWindows(quota) && quota.reset !== "") {
         usageNoBar += resetSuffix(config, quota.reset);
       }
     }
@@ -373,7 +415,7 @@ function renderMultiline(
     let usageCompact = "";
     if (quota.hasQuota) {
       usageCompact = usageLabel(config, quota, false);
-      if (quota.windows.length <= 1 && quota.reset !== "") {
+      if (!hasNamedWindows(quota) && quota.reset !== "") {
         usageCompact += resetSuffix(config, quota.reset);
       }
     }
@@ -434,7 +476,7 @@ function renderSingleLine(
   let usage2 = "";
   if (quota.hasQuota) {
     let text = usageLabel(config, quota, false);
-    if (quota.windows.length <= 1 && quota.reset !== "") {
+    if (!hasNamedWindows(quota) && quota.reset !== "") {
       text += resetSuffix(config, quota.reset);
     }
     usage2 = colorize(text, colorMuted, config.color);
@@ -486,7 +528,7 @@ function renderSingleLine(
   return fit(`${formatInt(ctxPct)}% ${stateLabel}`, width);
 }
 
-function quotaInfo(cache, modelDisplay, officialQuota, now) {
+function quotaInfo(cache, modelDisplay, officialQuota, now, rateLimits = null) {
   const cacheInfo = cacheQuotaInfo(cache, modelDisplay);
   const official = officialQuotaInfo(officialQuota, modelDisplay);
   if (official !== null) {
@@ -500,10 +542,55 @@ function quotaInfo(cache, modelDisplay, officialQuota, now) {
     }
     return official;
   }
+  const claudeRl = claudeRateLimitsInfo(rateLimits, now);
+  if (claudeRl !== null) {
+    return claudeRl;
+  }
   if (cacheInfo !== null) {
     return cacheInfo;
   }
   return noQuota();
+}
+
+function claudeRateLimitsInfo(rateLimits, now) {
+  if (!rateLimits || typeof rateLimits !== "object") {
+    return null;
+  }
+  const defs = [
+    { key: "five_hour", label: "5h" },
+    { key: "seven_day", label: "Week" }
+  ];
+  const buckets = [];
+  let sawKnownBucket = false;
+  const nowSec = Math.trunc((now instanceof Date ? now.getTime() : Date.now()) / 1000);
+  for (const { key, label } of defs) {
+    if (!Object.prototype.hasOwnProperty.call(rateLimits, key)) {
+      continue;
+    }
+    const bucket = rateLimits[key];
+    if (!bucket || typeof bucket !== "object") {
+      continue;
+    }
+    sawKnownBucket = true;
+    const rawUsed = Number(bucket.used_percentage);
+    if (!Number.isFinite(rawUsed)) {
+      continue;
+    }
+    const usagePct = clampInt(Math.trunc(rawUsed + 0.5));
+    let reset = "";
+    const resetsAt = Number(bucket.resets_at);
+    if (usagePct > 0 && Number.isFinite(resetsAt) && resetsAt > 0) {
+      const diffSec = resetsAt - nowSec;
+      if (diffSec > 0) {
+        reset = formatResetDuration(diffSec);
+      }
+    }
+    buckets.push({ label, usagePct, reset });
+  }
+  if (buckets.length === 0) {
+    return sawKnownBucket ? noQuota() : null;
+  }
+  return quotaDisplay(buckets);
 }
 
 function cacheQuotaInfo(cache, modelDisplay) {
@@ -696,8 +783,14 @@ function contextPercent(ctx) {
   return clampInt(Math.trunc(upstream + 0.5));
 }
 
+function hasNamedWindows(quota) {
+  return (
+    quota.windows.length > 1 || (quota.windows.length === 1 && Boolean(quota.windows[0].label))
+  );
+}
+
 function usageLabel(config, quota, withBar) {
-  if (quota.windows.length > 1) {
+  if (hasNamedWindows(quota)) {
     return `Usage ${quota.windows
       .map((window) => usageWindowLabel(config, window, withBar))
       .join(" │ ")}`;
