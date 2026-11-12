@@ -112,6 +112,7 @@ function defaultConfig() {
     showSession: true,
     showConversationId: true,
     showConversationSize: true,
+    showVersion: true,
     showHost: true,
     contextValue: "percent",
     usageValue: "remaining",
@@ -143,6 +144,9 @@ function merge(base, patch) {
   }
   if (typeof patch.show_conversation_size === "boolean") {
     base.showConversationSize = patch.show_conversation_size;
+  }
+  if (typeof patch.show_version === "boolean") {
+    base.showVersion = patch.show_version;
   }
   if (typeof patch.show_host === "boolean") base.showHost = patch.show_host;
   if (typeof patch.context_value === "string" && patch.context_value !== "") {
@@ -1386,6 +1390,13 @@ function renderHostSegment(hostInfo, config) {
   return `${withIcon(config, icon, "")}${hostInfo.machine}\xB7${hostInfo.mode}`;
 }
 
+function renderVersionSegment(rawVersion, config) {
+  if (config.showVersion === false) return "";
+  const clean = String(rawVersion ?? "").trim().replace(/^v/i, "");
+  if (!/^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z._+-]*$/.test(clean)) return "";
+  return `v${clean}`;
+}
+
 function renderModelSegment(shortModel, rawPlan, config) {
   let plan = "Plan ?";
   if (rawPlan) {
@@ -1508,6 +1519,8 @@ function renderMultiline(
           config.color
         )
       : "";
+  const verRaw = renderVersionSegment(payload.version, config);
+  const verText = verRaw ? colorize(verRaw, colorMagenta, config.color) : "";
   const convFullRaw = renderConvSegment(convInfo, config, false);
   const convShortRaw = renderConvSegment(convInfo, config, true);
   const convFullText = convFullRaw ? colorize(convFullRaw, colorMuted, config.color) : "";
@@ -1534,9 +1547,10 @@ function renderMultiline(
       ? colorize(renderSessionSegment(sessionTitle, config), colorCyan, config.color)
       : "";
 
-  // Tier 0: Full layout with full 36-char Conversation UUID + Size
+  // Tier 0: Full layout with AGY version + full 36-char Conversation UUID + Size
   let line1 = joinHeader(
     hostText,
+    verText,
     modelText,
     sessionFullText,
     convFullText,
@@ -1549,6 +1563,7 @@ function renderMultiline(
   if (visibleLen(line1) > width && convShortText !== convFullText) {
     line1 = joinHeader(
       hostText,
+      verText,
       modelText,
       sessionFullText,
       convShortText,
@@ -1558,17 +1573,26 @@ function renderMultiline(
     );
   }
 
-  // Tier 2: Truncate Session Title (20 chars) + keep 8-char short Conversation ID
+  // Tier 2: Truncate Session Title (20 chars) + keep AGY version + 8-char Conversation ID
   if (visibleLen(line1) > width && sessionFullText !== "") {
     const sess20 = colorize(
       renderSessionSegment(truncate(sessionTitle, 20), config),
       colorCyan,
       config.color
     );
-    line1 = joinHeader(hostText, modelText, sess20, convShortText, cwdText, gitText, stateText);
+    line1 = joinHeader(
+      hostText,
+      verText,
+      modelText,
+      sess20,
+      convShortText,
+      cwdText,
+      gitText,
+      stateText
+    );
   }
 
-  // Tier 3: Drop CWD, keep 8-char short Conversation ID + Git + Session (16 chars)
+  // Tier 3: Drop CWD, keep AGY version + 8-char Conversation ID + Git + Session (16 chars)
   if (visibleLen(line1) > width) {
     const sess16 =
       sessionFullText !== ""
@@ -1578,10 +1602,10 @@ function renderMultiline(
             config.color
           )
         : "";
-    line1 = joinHeader(hostText, modelText, sess16, convShortText, gitText, stateText);
+    line1 = joinHeader(hostText, verText, modelText, sess16, convShortText, gitText, stateText);
   }
 
-  // Tier 4: Drop Git, keep 8-char short Conversation ID + Session (14 chars)
+  // Tier 4: Drop Git, keep AGY version + 8-char Conversation ID + Session (14 chars)
   if (visibleLen(line1) > width && convShortText !== "") {
     const sess14 =
       sessionFullText !== ""
@@ -1591,13 +1615,14 @@ function renderMultiline(
             config.color
           )
         : "";
-    line1 = joinHeader(hostText, modelText, sess14, convShortText, stateText);
+    line1 = joinHeader(hostText, verText, modelText, sess14, convShortText, stateText);
   }
 
-  // Tier 5: Ultra-narrow fallbacks (drop Conversation ID to preserve core HUD)
+  // Tier 5: Ultra-narrow fallbacks (drop Conversation ID, keep AGY version if possible)
   if (visibleLen(line1) > width) {
     const p = [];
     if (hostText) p.push(hostText);
+    if (verText) p.push(verText);
     p.push(modelText);
     if (sessionFullText !== "") {
       p.push(
@@ -1703,6 +1728,8 @@ function renderSingleLine(
         )
       : "";
   const coloredBadge = colorize(modelSegment, colorBlue, config.color);
+  const verRaw = renderVersionSegment(payload.version, config);
+  const coloredVer = verRaw ? colorize(verRaw, colorMagenta, config.color) : "";
   const coloredSession =
     config.showSession && sessionTitle
       ? colorize(renderSessionSegment(truncate(sessionTitle, 18), config), colorCyan, config.color)
@@ -1736,30 +1763,30 @@ function renderSingleLine(
   const levels = [];
   if (coloredSession) {
     if (coloredConvFull) {
-      levels.push([coloredHost, coloredBadge, coloredSession, coloredConvFull, ctx, tokens, bar, usage2, stateText]);
+      levels.push([coloredHost, coloredVer, coloredBadge, coloredSession, coloredConvFull, ctx, tokens, bar, usage2, stateText]);
     }
     if (coloredConvShort) {
-      levels.push([coloredHost, coloredBadge, coloredSession, coloredConvShort, ctx, tokens, bar, usage2, stateText]);
-      levels.push([coloredHost, coloredBadge, coloredSession, coloredConvShort, ctx, bar, usage2, stateText]);
-      levels.push([coloredHost, coloredBadge, coloredSession, coloredConvShort, ctx, stateText]);
+      levels.push([coloredHost, coloredVer, coloredBadge, coloredSession, coloredConvShort, ctx, tokens, bar, usage2, stateText]);
+      levels.push([coloredHost, coloredVer, coloredBadge, coloredSession, coloredConvShort, ctx, bar, usage2, stateText]);
+      levels.push([coloredHost, coloredVer, coloredBadge, coloredSession, coloredConvShort, ctx, stateText]);
     }
-    levels.push([coloredHost, coloredBadge, coloredSession, ctx, tokens, bar, usage2, stateText]);
-    levels.push([coloredHost, coloredBadge, coloredSession, ctx, bar, usage2, stateText]);
-    levels.push([coloredHost, coloredBadge, coloredSession, ctx, stateText]);
+    levels.push([coloredHost, coloredVer, coloredBadge, coloredSession, ctx, tokens, bar, usage2, stateText]);
+    levels.push([coloredHost, coloredVer, coloredBadge, coloredSession, ctx, bar, usage2, stateText]);
+    levels.push([coloredHost, coloredVer, coloredBadge, coloredSession, ctx, stateText]);
     levels.push([coloredHost, coloredSession, ctx, stateText]);
   }
   if (coloredConvFull) {
-    levels.push([coloredHost, coloredBadge, coloredConvFull, ctx, tokens, bar, usage2, stateText]);
+    levels.push([coloredHost, coloredVer, coloredBadge, coloredConvFull, ctx, tokens, bar, usage2, stateText]);
   }
   if (coloredConvShort) {
-    levels.push([coloredHost, coloredBadge, coloredConvShort, ctx, bar, usage2, stateText]);
-    levels.push([coloredHost, coloredBadge, coloredConvShort, ctx, stateText]);
+    levels.push([coloredHost, coloredVer, coloredBadge, coloredConvShort, ctx, bar, usage2, stateText]);
+    levels.push([coloredHost, coloredVer, coloredBadge, coloredConvShort, ctx, stateText]);
   }
   levels.push(
-    [coloredHost, coloredBadge, ctx, tokens, bar, usage2, stateText],
-    [coloredHost, coloredBadge, ctx, bar, usage2, stateText],
-    [coloredHost, coloredBadge, ctx, usage2, stateText],
-    [coloredHost, coloredBadge, ctx, stateText],
+    [coloredHost, coloredVer, coloredBadge, ctx, tokens, bar, usage2, stateText],
+    [coloredHost, coloredVer, coloredBadge, ctx, bar, usage2, stateText],
+    [coloredHost, coloredVer, coloredBadge, ctx, usage2, stateText],
+    [coloredHost, coloredVer, coloredBadge, ctx, stateText],
     [coloredHost, ctx, stateText],
     [`${formatInt(ctxPct)}%`, stateLabel]
   );
@@ -2150,6 +2177,7 @@ module.exports = {
   shortModelName,
   renderSessionSegment,
   renderConvSegment,
+  renderVersionSegment,
   renderHostSegment,
   renderModelSegment,
   renderGitSegment,
@@ -2674,7 +2702,7 @@ function collectAndSyncTmux(opts = {}) {
     let barVer = agent.engine;
     if (runningVer) {
       if (isOutdated) {
-        verBadge = `${agent.engine} ${runningVer} → ${latestVer} ⬆`;
+        verBadge = `${agent.engine} ${latestVer} ⬆`;
         barVer = `${agent.engine} ${runningVer}→${latestVer}⬆`;
       } else {
         verBadge = `${agent.engine} ${runningVer} ✓`;

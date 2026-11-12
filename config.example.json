@@ -1,5 +1,6 @@
 {
   "show_host": true,
+  "show_version": true,
   "show_session": true,
   "show_conversation_id": true,
   "show_conversation_size": true,

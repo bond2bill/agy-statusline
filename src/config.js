@@ -26,6 +26,7 @@ function defaultConfig() {
     showSession: true,
     showConversationId: true,
     showConversationSize: true,
+    showVersion: true,
     showHost: true,
     contextValue: "percent",
     usageValue: "remaining",
@@ -57,6 +58,9 @@ function merge(base, patch) {
   }
   if (typeof patch.show_conversation_size === "boolean") {
     base.showConversationSize = patch.show_conversation_size;
+  }
+  if (typeof patch.show_version === "boolean") {
+    base.showVersion = patch.show_version;
   }
   if (typeof patch.show_host === "boolean") base.showHost = patch.show_host;
   if (typeof patch.context_value === "string" && patch.context_value !== "") {

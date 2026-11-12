@@ -43,6 +43,7 @@ NUM_COLOR="${FG_BRIGHT_WHITE}${B}"
   read -r CONV_ID || true
   read -r CONV_TITLE || true
   read -r CWD || true
+  read -r AGY_VER || true
 } <<< "$(
   jq -r '
     (.agent_state // "idle"),
@@ -57,9 +58,15 @@ NUM_COLOR="${FG_BRIGHT_WHITE}${B}"
     (.terminal_width // 80),
     (.conversation_id // .session_id // ""),
     (.session_name // .title // .conversation_title // ""),
-    (.workspace.current_dir // .cwd // "")
-  ' 2>/dev/null || printf "idle\n0\n\nfalse\nfalse\n0\n0\n0\n\n80\n\n\n\n"
+    (.workspace.current_dir // .cwd // ""),
+    (.version // "")
+  ' 2>/dev/null || printf "idle\n0\n\nfalse\nfalse\n0\n0\n0\n\n80\n\n\n\n\n"
 )"
+
+VER_BADGE=""
+if [[ "${AGY_VER:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z._+-]*$ ]]; then
+  VER_BADGE="${FG_BRIGHT_MAGENTA}v${AGY_VER}${R} "
+fi
 
 PCT_FMT=$(LC_NUMERIC=C printf "%.1f" "${USED_PCT:-0}" 2>/dev/null || echo "0.0")
 PCT_INT=${USED_PCT%.*}; PCT_INT=${PCT_INT:-0}
@@ -273,7 +280,7 @@ else
 fi
 
 # ─── Responsive Output ───────────────────────────────────────────────────────
-LINE1="${HOST_BADGE}${S}${SES}${CONV_BADGE}${M}${V}"
+LINE1="${HOST_BADGE}${VER_BADGE}${S}${SES}${CONV_BADGE}${M}${V}"
 LINE2=" ${CTX}${DOT}${ART_FMT}${DOT}${SUB_FMT}${DOT}${BG_FMT}${DOT}${SB}"
 
 if [ "$COLS" -ge 120 ]; then

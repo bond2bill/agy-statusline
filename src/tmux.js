@@ -507,7 +507,7 @@ function collectAndSyncTmux(opts = {}) {
     let barVer = agent.engine;
     if (runningVer) {
       if (isOutdated) {
-        verBadge = `${agent.engine} ${runningVer} → ${latestVer} ⬆`;
+        verBadge = `${agent.engine} ${latestVer} ⬆`;
         barVer = `${agent.engine} ${runningVer}→${latestVer}⬆`;
       } else {
         verBadge = `${agent.engine} ${runningVer} ✓`;

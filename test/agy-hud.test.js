@@ -302,6 +302,7 @@ test("session: resolves /rename from history.jsonl (by conversationId and worksp
 test("statusline & main: renders host, session, model, git branch, context, and dual-window quota identically in src and dist", () => {
   const payload = {
     cwd: "/Users/ryan/Automation_Solutions/RD_by_AI/agy-statusline",
+    version: "1.5.5",
     conversation_id: "d8fb3f4f-6415-4cbf-88fa-176c12c9f154",
     conversation_title: "Refactor AGY Statusline",
     model: {
@@ -341,6 +342,7 @@ test("statusline & main: renders host, session, model, git branch, context, and 
   assert.equal(outSrc, outDist);
   const plain = ansi.strip(outSrc);
   assert.ok(plain.includes("MacMini·SSH"), `Expected MacMini·SSH in: ${plain}`);
+  assert.ok(plain.includes("v1.5.5"), `Expected v1.5.5 version in: ${plain}`);
   assert.ok(plain.includes("4 Argon High"), `Expected model in: ${plain}`);
   assert.ok(plain.includes("Refactor AGY Statusline"), `Expected session title in: ${plain}`);
   assert.ok(
@@ -364,6 +366,10 @@ test("statusline & main: renders host, session, model, git branch, context, and 
     syncTmux: false
   });
   const narrowPlain = ansi.strip(narrowOut);
+  assert.ok(
+    narrowPlain.includes("v1.5.5"),
+    `Expected v1.5.5 preserved on narrower width in: ${narrowPlain}`
+  );
   assert.ok(
     narrowPlain.includes("d8fb3f4f (5.9MB)"),
     `Expected 8-char short ID + size on narrower width in: ${narrowPlain}`
@@ -437,11 +443,15 @@ test("tmux: compares SemVer, formats etime, finds child agy/cc PIDs under zsh, a
     assert.ok(summary.includes("⬆ 1 agy · 1 cc"), `Expected outdated counts in: ${summary}`);
 
     const flatArgs = setCalls.flat().join(" ");
-    assert.ok(flatArgs.includes("agy 1.4.12 → 1.5.5 ⬆"));
+    assert.ok(flatArgs.includes("agy 1.5.5 ⬆"));
+    assert.ok(!flatArgs.includes("agy 1.4.12 → 1.5.5 ⬆"));
+    assert.ok(flatArgs.includes("agy 1.4.12→1.5.5⬆"));
     assert.ok(flatArgs.includes("7d19h"));
     assert.ok(flatArgs.includes("agy 1.5.5 ✓"));
     assert.ok(flatArgs.includes("12m"));
-    assert.ok(flatArgs.includes("cc 2.1.310 → 2.1.322 ⬆"));
+    assert.ok(flatArgs.includes("cc 2.1.322 ⬆"));
+    assert.ok(!flatArgs.includes("cc 2.1.310 → 2.1.322 ⬆"));
+    assert.ok(flatArgs.includes("cc 2.1.310→2.1.322⬆"));
     assert.ok(flatArgs.includes("18d3h"));
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -529,6 +539,7 @@ test("soak: randomized payloads across widths, modes, models, and configs withou
 
     const payload = {
       cwd: `/Users/ryan/project_${i % 10}`,
+      version: "1.5.6",
       conversation_id: `conv-${i}`,
       conversation_title: i % 5 === 0 ? "Unicode Title CJK & Emoji 🚀" : `Session #${i}`,
       model: { display_name: model },
