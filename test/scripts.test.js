@@ -236,6 +236,7 @@ test("install.sh installs plugin, scripts, updates settings.json, and upgrades .
       `Expected upgraded tmux format in: ${updatedTmuxConf}`
     );
     assert.ok(updatedTmuxConf.includes("tmux-agent-status.sh"));
+    assert.ok(updatedTmuxConf.includes("#{?#{e|>=:#{client_width},120},"));
     assert.ok(updatedTmuxConf.includes("@agent_ver_badge"));
     assert.ok(updatedTmuxConf.includes("@agent_uptime"));
 
