@@ -349,7 +349,7 @@ test("statusline & main: renders host, session, model, git branch, context, and 
     plain.includes("d8fb3f4f-6415-4cbf-88fa-176c12c9f154"),
     `Expected full UUID on wide terminal in: ${plain}`
   );
-  assert.ok(plain.includes("5h:"), `Expected 5h quota window in: ${plain}`);
+  assert.ok(plain.includes("Remaining 5h:"), `Expected Remaining 5h quota window in: ${plain}`);
   assert.ok(plain.includes("Week:"), `Expected Week quota window in: ${plain}`);
 
   // Narrower width (115 cols): automatically steps down full UUID to 8-char short ID + size
@@ -453,7 +453,7 @@ test("claude code cli: renders v2.x.xxx, effort, session_id + companion dir size
       `Expected full UUID + 5.0MB total size on wide tmux pane in: ${plain}`
     );
     assert.ok(plain.includes("Working"), `Expected live Working state from sessions/<pid>.json in: ${plain}`);
-    assert.ok(plain.includes("Week:"), `Expected Week rate_limit window in: ${plain}`);
+    assert.ok(plain.includes("Remaining Week:"), `Expected Remaining Week rate_limit window in: ${plain}`);
     assert.ok(plain.includes("43%"), `Expected 43% remaining (100 - 57) in: ${plain}`);
 
     // Verify syncTmuxTitle did NOT overwrite Claude's native select-pane -T / rename-window,

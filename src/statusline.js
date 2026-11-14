@@ -424,7 +424,8 @@ function renderMultiline(
   if (visibleLen(line2) > width) {
     let coreUsage = "";
     if (quota.hasQuota) {
-      coreUsage = `Use ${usageValue(config, quota.usagePct)}`;
+      const corePrefix = config.usageValue === "remaining" ? "Rem" : "Use";
+      coreUsage = `${corePrefix} ${usageWindowValue(config, quota.usagePct)}`;
     }
     line2 = join(`Ctx ${formatInt(ctxPct)}%`, coreUsage);
   }
@@ -790,16 +791,17 @@ function hasNamedWindows(quota) {
 }
 
 function usageLabel(config, quota, withBar) {
+  const prefix = config.usageValue === "remaining" ? "Remaining" : "Usage";
   if (hasNamedWindows(quota)) {
-    return `Usage ${quota.windows
+    return `${prefix} ${quota.windows
       .map((window) => usageWindowLabel(config, window, withBar))
       .join(" │ ")}`;
   }
-  let label = "Usage ";
+  let label = `${prefix} `;
   if (withBar && config.showProgressBar) {
     label += `${usageBar(config, quota.usagePct)} `;
   }
-  return label + usageValue(config, quota.usagePct);
+  return label + usageWindowValue(config, quota.usagePct);
 }
 
 function usageWindowLabel(config, window, withBar) {

@@ -34,6 +34,7 @@ test("hooks/status-line.sh renders HUD and supports AGY_HUD_DEBUG=1", () => {
     encoding: "utf8",
     env: {
       ...process.env,
+      TMUX: "",
       AGY_HOST_LABEL: "MacMini",
       SSH_CONNECTION: "127.0.0.1 1 127.0.0.1 22",
       AGY_TMUX_NO_SYNC: "1"
@@ -66,6 +67,7 @@ test("scripts/statusline.sh renders Wide, Medium, and Narrow layouts and detects
       encoding: "utf8",
       env: {
         ...process.env,
+        TMUX: "",
         AGY_HOST_LABEL: "MacMini",
         SSH_CONNECTION: "10.0.0.1 123 10.0.0.2 22",
         AGY_TMUX_NO_SYNC: "1"
@@ -207,6 +209,7 @@ test("install.sh installs plugin, scripts, updates settings.json, and upgrades .
       encoding: "utf8",
       env: {
         ...process.env,
+        TMUX: "",
         AGY_HOST_LABEL: "MacMini",
         SSH_CONNECTION: "127.0.0.1 1 127.0.0.1 22",
         AGY_HUD_WIDTH: "180",
